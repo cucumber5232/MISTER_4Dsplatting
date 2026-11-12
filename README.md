@@ -55,8 +55,9 @@ Verificato in questo repository, su dati sintetici con verità nota
 GPU e senza riprese reali):
 
 - lo script di installazione per Windows: le versioni che installa esistono
-  sugli indici ufficiali di PyTorch e gsplat, ma lo script non è stato
-  eseguito su una macchina Windows;
+  sugli indici ufficiali di PyTorch e gsplat, e i test passano su Linux con
+  le stesse versioni (Python 3.10, PyTorch 2.4.1, NumPy 1.26, gsplat 1.5.3),
+  ma lo script non è stato eseguito su una macchina Windows;
 - il backend GPU (gsplat/CUDA) e il training su più GPU su hardware vero. La
   logica multi-GPU è collaudata su CPU con due dispositivi virtuali e il
   rasterizzatore di riferimento su CPU coincide numericamente con
