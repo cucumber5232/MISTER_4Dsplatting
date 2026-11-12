@@ -1,0 +1,19 @@
+# Default training options for a real take on GPU.
+# Every key of mister4d.trainer.TrainConfig can be set here; anything omitted
+# keeps its default. Override single values from the command line with
+#   mister4d train <data> --out <run> --config configs/default.yaml --set iterations=30000
+
+# All visible GPUs are used: each one renders a different instant per step.
+devices: auto
+views_per_step: 4        # cameras per GPU and per step
+cache_gb: 16             # RAM for decoded frames; raise it if the take fits in memory
+
+# -1 = 250 steps per frame of the take (at least 7000). Every frame has its own
+# Gaussians, so longer takes need proportionally more steps.
+iterations: -1
+
+# Few cameras cannot constrain view-dependent colour: keep 0 below ~8 cameras,
+# try 1-2 with a full ring.
+sh_degree: 0
+
+max_gaussians: 2000000

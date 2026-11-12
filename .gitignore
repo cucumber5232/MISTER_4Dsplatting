@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
+
+# Capture sessions, datasets, training runs and exports are data, not code.
+sessions/
+data/
+runs/
+exports/
+*.mp4
+*.mov
+*.mxf
+*.braw
+*.pt
+*.ply
+charuco_*.png

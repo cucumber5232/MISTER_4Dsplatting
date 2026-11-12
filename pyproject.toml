@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mister4d"
+version = "0.1.0"
+description = "POC: 4D Gaussian Splatting from 3+ synchronized fixed cameras"
+readme = "README.md"
+requires-python = ">=3.10"
+# Every runtime dependency is under a permissive licence (see docs/LICENZE.md).
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "torch>=2.1",
+    "gsplat>=1.5,<2",
+    "opencv-python-headless>=4.8",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+mister4d = "mister4d.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mister4d = ["viewer/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: end-to-end tests that train a small model on CPU"]
