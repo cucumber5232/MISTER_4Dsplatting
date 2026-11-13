@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="theme.css">
 <link rel="stylesheet" href="app.css">
 </head>
-<body data-theme="light">
+<body>
 
 <!-- The rig of the MISTER guide: eight cameras around the subject, four raised and offset. -->
 <div class="backdrop" aria-hidden="true">
@@ -45,6 +45,19 @@
     <h2 id="t-progetto">Dove salviamo il lavoro</h2>
     <p class="lead">Scegli una cartella vuota, oppure un progetto già iniziato. Lì finiscono i file di lavoro
       e il risultato: i video originali non vengono mai modificati.</p>
+    <details class="fold explain">
+      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <dl class="explain">
+        <div><dt>La cartella del progetto</dt>
+          <dd>È il posto dove il programma scrive tutto quello che produce: le immagini estratte dai video, la calibrazione, la scena e il risultato. Usa una cartella diversa per ogni ripresa. I video originali restano dove sono e non vengono toccati.</dd></div>
+        <div><dt>Dove metterla</dt>
+          <dd>Su un disco interno veloce e con molto spazio libero. Da ogni video vengono estratte tutte le immagini, una per fotogramma: pochi secondi di ripresa in alta risoluzione con più camere occupano già alcuni gigabyte.</dd></div>
+        <div><dt>Riprendere un lavoro</dt>
+          <dd>Indicando una cartella già usata, il programma ritrova le scelte fatte e i passi già completati, e riparte da lì.</dd></div>
+        <div><dt>Questo computer</dt>
+          <dd>Le schede grafiche NVIDIA fanno il lavoro pesante della ricostruzione: senza, si può solo provare il percorso in versione ridotta. FFmpeg è il programma che legge i file video: se manca va rilanciata l'installazione.</dd></div>
+      </dl>
+    </details>
     <div class="field">
       <label for="projectPath">Cartella del progetto</label>
       <div class="path-row">
@@ -72,6 +85,25 @@
     <p class="lead">Servono tre riprese fatte con le stesse camere, ognuna in una cartella con un file per
       camera. Il nome del file è il nome della camera e deve essere lo stesso nelle tre cartelle
       (cam01, cam02, …).</p>
+    <details class="fold explain">
+      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <dl class="explain">
+        <div><dt>Perché tre riprese</dt>
+          <dd>Il pannello serve a capire dove si trova e come è orientata ogni camera. Il set vuoto serve a distinguere il soggetto dallo sfondo. La ripresa del soggetto è la scena da ricostruire. Tra una ripresa e l'altra le camere non vanno toccate: stessa posizione, stesso zoom, stesso fuoco, stessa risoluzione. Se una camera viene spostata, le tre riprese vanno rifatte.</dd></div>
+        <div><dt>Come preparare le cartelle</dt>
+          <dd>Una cartella per ripresa, con dentro un file video per camera. Il nome del file è il nome della camera e deve essere identico nelle tre cartelle: per esempio cam01.mp4, cam02.mp4, cam03.mp4. Vanno bene i formati video comuni (MP4, MOV, MKV, MXF).</dd></div>
+        <div><dt>Pannello di calibrazione</dt>
+          <dd>Una persona muove lentamente il pannello stampato dentro lo spazio in cui starà il soggetto, a varie altezze e inclinandolo in direzioni diverse, per 30–60 secondi. Ogni camera deve vederlo più volte, e ogni volta insieme a una camera vicina: è così che le camere vengono collegate tra loro. Il file del pannello da stampare si crea al passo 03.</dd></div>
+        <div><dt>Set vuoto</dt>
+          <dd>Qualche secondo dello spazio di ripresa senza nessuno dentro, con le stesse luci e le stesse impostazioni della ripresa vera. Tutto ciò che cambia rispetto a questo momento verrà considerato parte del soggetto.</dd></div>
+        <div><dt>Sincronizzazione</dt>
+          <dd>Tutte le camere devono mostrare lo stesso istante nello stesso fotogramma. Con trigger o genlock lo fanno già: scegli «Via hardware». Altrimenti il programma riallinea i video cercando un evento comune: un battito di mani forte e secco, se ogni camera registra l'audio, oppure un flash o una luce accesa di colpo, visibile da tutte. L'evento va fatto all'inizio della ripresa del pannello e di quella del soggetto. Il riallineamento è preciso al fotogramma: può restare uno scarto più piccolo, che conta solo con movimenti veloci e si può correggere al passo 05.</dd></div>
+        <div><dt>Fotogrammi da scartare all'inizio</dt>
+          <dd>Dopo l'allineamento, i primi fotogrammi contengono il battito di mani o il flash, e spesso il soggetto che si mette in posizione. Indica quanti saltarne: a 30 fotogrammi al secondo, 30 fotogrammi sono un secondo.</dd></div>
+        <div><dt>Che cosa fa questo passo</dt>
+          <dd>Controlla che i video abbiano la stessa cadenza e la stessa risoluzione, li allinea e ne estrae le immagini. Se una camera ha perso dei fotogrammi durante la registrazione lo segnala, e quegli istanti vengono scartati.</dd></div>
+      </dl>
+    </details>
     <ol class="clips">
       <li data-clip="calib">
         <div class="clip-head"><h3>Pannello di calibrazione</h3>
@@ -130,6 +162,25 @@
     <h2 id="t-calibrazione">Dove guarda ogni camera</h2>
     <p class="lead">Dal video del pannello si ricavano l'ottica e la posizione di ogni camera. Misura con un
       calibro un riquadro del pannello stampato: è il pannello a fissare la scala di tutto.</p>
+    <details class="fold explain">
+      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <dl class="explain">
+        <div><dt>Il pannello</dt>
+          <dd>È una scacchiera con un disegno diverso in ogni casella bianca: guardandolo, il programma riconosce ogni punto senza ambiguità. Va stampato al 100%, senza adattamento alla pagina, e incollato su un supporto rigido e opaco: se si piega o riflette la luce, la calibrazione peggiora. <span id="boardSize"></span></dd>
+          <dd class="explain-actions">
+            <button id="makeBoard" class="btn" type="button">Crea il file del pannello da stampare</button>
+            <span id="boardDone" class="hint" role="status"></span>
+          </dd></div>
+        <div><dt>Lato di un riquadro</dt>
+          <dd>Dopo la stampa, misura con un calibro o un righello il lato di una casella (nere e bianche sono uguali) e scrivilo in centimetri. Le stampanti non rispettano mai esattamente le misure: conta quella reale. Da questo numero dipende la scala di tutta la scena: se è sbagliato la ricostruzione funziona lo stesso, ma le dimensioni non sono quelle vere.</dd></div>
+        <div><dt>Lato di un marker</dt>
+          <dd>Il marker è il quadrato con il disegno dentro la casella bianca, più piccolo della casella. Si misura allo stesso modo.</dd></div>
+        <div><dt>Opzioni avanzate</dt>
+          <dd>Il numero di riquadri e il tipo di marker descrivono com'è fatto il pannello: cambiali solo se usi un pannello diverso da quello creato qui. «Fotogramma con il pannello a terra» serve se durante la ripresa hai appoggiato per un momento il pannello piatto sul pavimento, al centro della scena e con la stampa verso l'alto: indicando quel fotogramma il pavimento diventa la quota zero. Il numero è quello del file immagine corrispondente, nella cartella lavoro/calibrazione/frames del progetto. Senza, la verticale viene dedotta dall'orientamento delle camere.</dd></div>
+        <div><dt>Che cosa esce</dt>
+          <dd>L'errore in pixel dice di quanto, in media, la posizione ricalcolata dei punti del pannello si scosta da quella vista nelle immagini: sotto mezzo pixel è buono, sopra un pixel la scena viene sfocata. La copertura dice se tra due camere vicine resta un angolo troppo ampio: da quel lato il soggetto può risultare più largo del vero.</dd></div>
+      </dl>
+    </details>
     <div class="field-grid">
       <div class="field narrow">
         <label for="opt-square_cm">Lato di un riquadro</label>
@@ -166,6 +217,23 @@
     <h2 id="t-preparazione">Isolare il soggetto</h2>
     <p class="lead">Si corregge la distorsione delle ottiche e si separa il soggetto dallo sfondo, confrontando
       ogni fotogramma con il set vuoto.</p>
+    <details class="fold explain">
+      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <dl class="explain">
+        <div><dt>Risoluzione di lavoro</dt>
+          <dd>Le immagini possono essere usate così come sono oppure rimpicciolite. Piena dà il massimo dettaglio ma richiede più tempo e più memoria della scheda grafica. Metà va bene per le prime prove. Un quarto serve per controllare in fretta che tutto il percorso funzioni.</dd></div>
+        <div><dt>Correzione delle ottiche</dt>
+          <dd>Ogni obiettivo deforma un po' l'immagine, soprattutto ai bordi. Con i dati della calibrazione le immagini vengono raddrizzate, così quello che vedono camere diverse può essere confrontato.</dd></div>
+        <div><dt>Maschere</dt>
+          <dd>Per ogni immagine il programma segna quali punti appartengono al soggetto, confrontandola con il set vuoto: è soggetto ciò che è cambiato. Per questo le luci non devono cambiare tra set vuoto e ripresa, e il soggetto non dovrebbe avere lo stesso colore dello sfondo.</dd></div>
+        <div><dt>Soglia delle maschere</dt>
+          <dd>Dice quanto un punto deve essere diverso dal set vuoto per contare come soggetto. Con un valore basso si prende tutto il soggetto ma anche ombre e disturbi; con un valore alto la maschera è più pulita ma può perdere le parti del soggetto simili allo sfondo.</dd></div>
+        <div><dt>Ombre a terra</dt>
+          <dd>L'ombra che il soggetto proietta sul pavimento cambia l'immagine ma non è il soggetto, e di norma viene tolta. Se insieme all'ombra spariscono parti scure vicine al pavimento, come le scarpe, spunta «Non togliere le ombre a terra».</dd></div>
+        <div><dt>Come leggere l'anteprima</dt>
+          <dd>Ogni riga è una camera, in tre momenti della ripresa. Il soggetto deve restare intero e in piena luce, lo sfondo scurito. È il controllo più utile di tutto il percorso: una maschera sbagliata si ritrova nel risultato.</dd></div>
+      </dl>
+    </details>
     <fieldset class="field">
       <legend>Risoluzione di lavoro</legend>
       <div class="choices segmented" role="radiogroup">
@@ -197,6 +265,23 @@
     <p class="note warn" id="reducedNote" hidden>Su questo computer non c'è una scheda grafica NVIDIA: la
       ricostruzione viene fatta in versione ridotta, con meno dettaglio e meno passi. Serve a provare il
       percorso, non a giudicare la qualità.</p>
+    <details class="fold explain">
+      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <dl class="explain">
+        <div><dt>Che cosa succede</dt>
+          <dd>Dalle sagome viste dalle camere si ricava prima una forma grezza del soggetto, istante per istante. Poi la scena viene descritta con moltissime piccole macchie colorate e sfumate, le gaussiane, che vengono spostate e corrette migliaia di volte finché le immagini calcolate dal punto di vista di ogni camera assomigliano il più possibile a quelle vere.</dd></div>
+        <div><dt>Camera di verifica</dt>
+          <dd>Una camera messa da parte non viene usata per costruire la scena. Alla fine il programma calcola che cosa si vedrebbe dal suo punto di vista e lo confronta con ciò che quella camera ha davvero ripreso: è una misura onesta della qualità. Ha un costo: con poche camere, toglierne una peggiora il risultato. Usala nelle prove; per la versione da consegnare scegli «Nessuna».</dd></div>
+        <div><dt>Scarti di tempo tra le camere</dt>
+          <dd>Senza sincronizzazione hardware le camere scattano in momenti leggermente diversi, fino a mezzo fotogramma. Con movimenti veloci le parti in moto appaiono sdoppiate. Spuntando la casella, il programma stima il piccolo ritardo di ogni camera e ne tiene conto. Funziona solo se nella scena c'è movimento.</dd></div>
+        <div><dt>Numero di passi</dt>
+          <dd>È il numero di correzioni successive. Lasciato vuoto, viene scelto in base alla durata della ripresa. Meno passi fanno prima ma lasciano la scena meno definita.</dd></div>
+        <div><dt>Schede grafiche da usare</dt>
+          <dd>Di norma vengono usate tutte insieme. Indicane una sola se l'altra serve per altro.</dd></div>
+        <div><dt>Durata e interruzione</dt>
+          <dd>Durante il calcolo vedi l'avanzamento e una stima del tempo che resta. Puoi lasciare la pagina aperta e fare altro. Se chiudi il programma o premi «Interrompi», questo passo va rifatto dall'inizio; i passi precedenti restano validi.</dd></div>
+      </dl>
+    </details>
     <div class="field">
       <label for="opt-holdout">Camera di verifica</label>
       <select id="opt-holdout" data-option="holdout"><option value="">Nessuna: usa tutte le camere</option></select>
@@ -224,6 +309,19 @@
     <h2 id="t-risultato">Guardare e consegnare</h2>
     <p class="lead">Si creano il player, un file unico da aprire con doppio clic, e un video dimostrativo.
       Se hai tenuto una camera di verifica viene misurata anche la qualità.</p>
+    <details class="fold explain">
+      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <dl class="explain">
+        <div><dt>Il player</dt>
+          <dd>È un solo file, player.html, che contiene sia la scena sia il programma per guardarla. Si apre con doppio clic in un browser recente, anche su un altro computer e senza connessione. Dentro si può far partire e fermare la scena, girarle intorno e guardarla dal punto di vista di ciascuna camera.</dd></div>
+        <div><dt>Il video dimostrativo</dt>
+          <dd>orbita.mp4 è un filmato di otto secondi in cui il punto di vista gira intorno al soggetto: serve per mostrare il risultato a chi non può aprire il player.</dd></div>
+        <div><dt>La qualità misurata</dt>
+          <dd>Compare solo se al passo 05 hai tenuto una camera di verifica. «Sagoma corretta» dice quanto il contorno ricostruito coincide con quello vero: 100% è perfetto. «Fedeltà dell'immagine» si misura in decibel: più è alta, più l'immagine ricostruita somiglia a quella vera; sopra 25 è buona. «Sfarfallio» dice quanto l'immagine trema da un fotogramma all'altro oltre il movimento reale: più è bassa, meglio è.</dd></div>
+        <div><dt>Se il risultato non convince</dt>
+          <dd>Le cause più frequenti sono poche camere o camere troppo lontane tra loro (passo 03), maschere imprecise (passo 04) e movimenti veloci con camere non sincronizzate (passo 05).</dd></div>
+      </dl>
+    </details>
     <div class="actions"><button class="btn primary" type="button" data-run="risultato">Crea player e video</button></div>
   </section>
 </main>

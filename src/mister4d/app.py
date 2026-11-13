@@ -279,6 +279,27 @@ class Studio:
         return {"folders": dict(self.videos), "cameras": cams, "problems": problems,
                 "ready": len(chosen) == 3 and not problems}
 
+    def make_board(self) -> dict:
+        """The calibration panel to print, as the options of the calibration step describe it."""
+        with self.lock:
+            if self.project is None:
+                raise ValueError("Scegli prima la cartella del progetto.")
+            o, out = self.options, self.project / "pannello_calibrazione.png"
+        argv = [sys.executable, "-m", "mister4d.cli", "board", "--out", str(out),
+                "--square", str(float(o["square_cm"]) / 100), "--marker", str(float(o["marker_cm"]) / 100),
+                "--squares-x", str(int(o["squares_x"])), "--squares-y", str(int(o["squares_y"])),
+                "--dictionary", str(o["dictionary"])]
+        try:
+            done = subprocess.run(argv, capture_output=True, text=True, timeout=300,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except subprocess.TimeoutExpired:
+            raise ValueError("La creazione del pannello non è terminata.") from None
+        if done.returncode != 0 or not out.exists():
+            reason = (done.stderr or done.stdout).strip().splitlines()[-1:] or ["motivo sconosciuto"]
+            raise ValueError(f"Non sono riuscito a creare il pannello: {reason[0]}")
+        return {"file": out.name, "width_cm": int(o["squares_x"]) * float(o["square_cm"]),
+                "height_cm": int(o["squares_y"]) * float(o["square_cm"])}
+
     # ---------------------------------------------------------- commands ---
 
     @property
@@ -637,6 +658,8 @@ def make_handler(studio: Studio, token: str):
                 path = urlparse(self.path).path
                 if path == "/api/pick-folder":
                     return self._json({"path": pick_folder(str(body.get("title") or "Scegli una cartella"))})
+                if path == "/api/board":
+                    return self._json({"board": studio.make_board()})
                 if path == "/api/project":
                     studio.open_project(str(body.get("path") or ""))
                 elif path == "/api/videos":

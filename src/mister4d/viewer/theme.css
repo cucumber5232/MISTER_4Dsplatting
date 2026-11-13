@@ -28,21 +28,8 @@
   --ease: cubic-bezier(.2, .7, .2, 1);
 }
 
-[data-theme="dark"] {
-  --bg: #0a1626;                              /* the navy, deepened */
-  --glass: rgba(15, 32, 56, .62); --glass-solid: rgba(15, 32, 56, .95);
-  --stroke: rgba(240, 244, 247, .12); --stroke-strong: rgba(240, 244, 247, .26);
-  --text: #f4f7fa; --text-2: #c2cedb; --text-3: #94a4b8; --heading: #ffffff;
-  --fill: rgba(240, 244, 247, .07); --fill-hover: rgba(240, 244, 247, .13); --track: rgba(240, 244, 247, .20);
-  --primary: var(--mister-ghiaccio); --primary-hover: #ffffff; --on-primary: var(--mister-navy);
-  --identity: #6db6ea;                        /* the logo blue, light enough to be read on navy */
-  --accent: #6db6ea; --accent-fill: #1d86d0; --accent-soft: rgba(29, 134, 208, .24);
-  --selected: rgba(8, 106, 175, .38); --selected-stroke: #6db6ea;
-  --danger: #f0998f; --warning: #f2c063;
-  --shadow: 0 14px 44px rgba(3, 9, 18, .55);
-}
-
-[data-theme="light"] {
+/* One look, light, as the MISTER site: no dark variant to keep in step. */
+:root {
   --bg: var(--mister-ghiaccio);
   --glass: rgba(255, 255, 255, .68); --glass-solid: rgba(255, 255, 255, .96);
   --stroke: rgba(14, 45, 84, .10); --stroke-strong: rgba(14, 45, 84, .26);

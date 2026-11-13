@@ -87,7 +87,7 @@
   }
 </style>
 </head>
-<body data-theme="dark">
+<body>
 <canvas id="gl" aria-label="Scena 4D: trascina per ruotare, rotella per lo zoom"></canvas>
 
 <!-- 1. What is loaded -->
@@ -166,13 +166,6 @@
 
     <section class="group" aria-labelledby="h-look">
       <h3 id="h-look" class="eyebrow"><b>2</b>Aspetto</h3>
-      <div class="field">
-        <div class="field-head"><span id="l-bg">Sfondo</span></div>
-        <div class="choices segmented" role="radiogroup" aria-labelledby="l-bg">
-          <label><input type="radio" name="background" value="dark" checked><span>Scuro</span></label>
-          <label><input type="radio" name="background" value="light"><span>Chiaro</span></label>
-        </div>
-      </div>
       <div class="field">
         <div class="field-head"><label for="splat">Dimensione degli splat</label><output id="splatValue" for="splat">100%</output></div>
         <input id="splat" type="range" min="20" max="150" step="5" value="100">

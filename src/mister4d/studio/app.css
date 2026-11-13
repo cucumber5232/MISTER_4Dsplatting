@@ -148,6 +148,12 @@ details.fold > .field-grid { margin-bottom: 20px; }
 details.fold .field-grid .field { margin-top: 8px; }
 details.fold .check { margin-top: 30px; }
 details.tech { margin-top: 28px; }
+/* The longer explanation of what a step asks: one term at a time, for whoever wants it. */
+details.explain { margin-top: 18px; }
+dl.explain { display: grid; gap: 14px; max-width: 66ch; margin: 2px 0 20px; }
+dl.explain dt { font-weight: 600; }
+dl.explain dd { margin: 2px 0 0; color: var(--text-2); }
+dl.explain dd.explain-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; }
 details.inner { margin-top: 14px; }
 details.inner > table { margin: 0 0 16px; }
 .outcome { scroll-margin-top: 16px; }

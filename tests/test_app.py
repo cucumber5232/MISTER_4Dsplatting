@@ -161,6 +161,13 @@ def test_without_a_gpu_the_reconstruction_is_reduced(studio, tmp_path):
     assert train[train.index("--iterations") + 1] == "300"
 
 
+def test_the_panel_to_print_follows_the_calibration_options(studio):
+    studio.set_options({"square_cm": 2.0, "marker_cm": 1.5, "squares_x": 4, "squares_y": 5})
+    board = studio.make_board()
+    assert board == {"file": "pannello_calibrazione.png", "width_cm": 8.0, "height_cm": 10.0}
+    assert (studio.project / board["file"]).stat().st_size > 1000
+
+
 def test_quality_is_measured_only_with_a_checking_camera(studio):
     assert [argv[0] for argv in cli_args(studio, "risultato")] == ["render", "export"]
     run = studio.result / "run"

@@ -86,7 +86,7 @@ const state = {
   scene: null, base: '', embedded: false, frames: [], loaded: 0,
   frame: 0, shown: -1, clock: 0, playing: true, speed: 1, loop: true,
   az: 0, el: 0.15, dist: 3, target: [0, 0, 0], fovY: 40 * Math.PI / 180, home: null,
-  preset: null, dirty: true, light: false, splatScale: 1, lastTime: 0, fps: 0, statsAt: 0,
+  preset: null, dirty: true, splatScale: 1, lastTime: 0, fps: 0, statsAt: 0,
 };
 let program, uniforms, textures, indexBuffer, order, depth, keys, counts;
 
@@ -336,7 +336,7 @@ function draw(now) {
   gl.uniform2f(uniforms.uViewport, canvas.width, canvas.height);
   gl.uniform1f(uniforms.uSplatScale, state.splatScale);
   gl.viewport(0, 0, canvas.width, canvas.height);
-  if (state.light) gl.clearColor(0.941, 0.957, 0.969, 1); else gl.clearColor(0.039, 0.086, 0.149, 1);  // theme --bg
+  gl.clearColor(0.941, 0.957, 0.969, 1);  // --bg of theme.css
   gl.clear(gl.COLOR_BUFFER_BIT);
   gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
 
@@ -443,11 +443,6 @@ function setPanel(open) {
   state.dirty = true;
 }
 
-function setTheme(light) {
-  state.light = light;
-  document.body.dataset.theme = light ? 'light' : 'dark';
-}
-
 function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen();
   else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
@@ -513,9 +508,6 @@ function setupControls() {
   // Point of view and appearance.
   buildCameraChoices();
   $('resetView').addEventListener('click', homeView);
-  for (const input of document.querySelectorAll('input[name="background"]')) {
-    input.addEventListener('change', () => setTheme(input.value === 'light'));
-  }
   $('splat').addEventListener('input', (e) => {
     state.splatScale = Number(e.target.value) / 100;
     $('splatValue').textContent = `${e.target.value}%`;

@@ -333,6 +333,15 @@
     if (state.project && state.project.free_gb < 20) {
       notes.push('Lo spazio libero è poco: i fotogrammi estratti da una ripresa occupano parecchi gigabyte.');
     }
+    // The size of the panel follows the numbers typed in the calibration step.
+    const side = Number(state.options.square_cm);
+    const boardW = state.options.squares_x * side;
+    const boardH = state.options.squares_y * side;
+    const cm = (value) => num(value, Number.isInteger(value) ? 0 : 1);
+    $('#boardSize').textContent = `Con le misure di questa pagina è largo ${cm(boardW)} cm e alto ${cm(boardH)} cm`
+      + (boardW > 29.7 || boardH > 42 ? ': serve una stampa di grande formato.' : '.');
+    $('#makeBoard').disabled = !state.project || busy;
+
     $('#reducedNote').hidden = !system.reduced;
     $('#resolutionNote').hidden = !(system.reduced && Number(state.options.downscale) < 4);
     const note = $('#sysNote');
@@ -788,6 +797,17 @@
       }
     });
     $('#openProject').addEventListener('click', () => send('/api/open', { what: 'project' }));
+    $('#makeBoard').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const done = $('#boardDone');
+      button.disabled = true;
+      done.textContent = 'Creo il file…';
+      const data = await send('/api/board', {});
+      button.disabled = false;
+      done.textContent = data && data.board
+        ? `Creato ${data.board.file} nella cartella del progetto (la apri con «Apri la cartella», in alto).`
+        : '';
+    });
     $('#makeExample').addEventListener('click', () => { follow = false; send('/api/run', { steps: ['esempio'] }); });
     $('#runAll').addEventListener('click', (event) => {
       const steps = event.currentTarget.dataset.steps.split(',').filter(Boolean);

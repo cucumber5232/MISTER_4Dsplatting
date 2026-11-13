@@ -155,6 +155,9 @@ qualunque sistema:
 mister4d app
 ```
 
+Una spiegazione non tecnica di tutto il percorso, da dare a chi lo usa:
+[docs/COME_FUNZIONA.md](docs/COME_FUNZIONA.md).
+
 La pagina accompagna attraverso sei passi, nell'ordine in cui vanno fatti. In
 ogni passo si legge prima che cosa serve, poi si preme un solo pulsante, poi
 si legge che cosa è venuto fuori; le opzioni che servono di rado sono
@@ -169,6 +172,10 @@ richiuse in «Opzioni avanzate».
 | 05 | Ricostruzione | la camera di verifica (facoltativa) | avanzamento con tempo residuo, poi riepilogo della scena |
 | 06 | Risultato | niente | player, video dimostrativo e, con la camera di verifica, qualità misurata |
 
+- In ogni passo la voce «Che cosa viene chiesto, in dettaglio» spiega ogni
+  richiesta: che cos'è, come prepararla, che cosa succede se è sbagliata. Nel
+  passo Calibrazione c'è anche il pulsante che crea il file del pannello da
+  stampare.
 - Studio **non è una seconda implementazione**: ogni passo lancia i comandi
   `mister4d` descritti più sotto, compilandone gli argomenti e traducendone
   l'esito. Quello che si ottiene dalla pagina e dal terminale è identico.
@@ -360,6 +367,13 @@ scelta in [docs/PIPELINE.md](docs/PIPELINE.md).
   all'altro: da punti di vista lontani dalle camere possono restare piccoli
   sfarfallii, e non c'è una traiettoria per punto utilizzabile per analisi del
   gesto.
+- **Durata.** Il numero di Gaussiane ha un tetto unico per tutta la ripresa
+  (`max_gaussians`, 2 milioni) e i punti iniziali si dividono tra i frame: più
+  la clip è lunga, meno dettaglio resta per ogni istante. I valori di default
+  sono pensati per 1–3 secondi; fino a una decina di secondi vanno alzati a
+  mano (`init --points`, `--set max_gaussians=…`), oltre serve lavorare a
+  spezzoni, cosa non ancora prevista. Anche i passi di training crescono con
+  la durata (250 per frame).
 - **Player.** Colore indipendente dalla vista, tutti i frame in memoria: va
   bene per clip di qualche secondo, non per riprese lunghe.
 - **Nessuna misura.** Fotorealismo non significa accuratezza metrica: il
@@ -376,7 +390,7 @@ src/mister4d/     pacchetto Python (un modulo per passo della pipeline)
 configs/          opzioni di training
 scripts/          installazione (Windows e Linux), avvio di Studio (Linux)
 tests/            test automatici
-docs/             licenze, pipeline, sessione di ripresa
+docs/             come funziona (non tecnico), licenze, pipeline, sessione di ripresa
 ```
 
 Test:
@@ -384,6 +398,28 @@ Test:
 ```bash
 pytest
 ```
+
+## Obiettivo: il livello dei lavori premiati a Venezia
+
+Il riferimento sono i lavori con attori in 4D Gaussian Splatting presentati a
+Venice Immersive 2026, come *Empire At Sea* (Achievement Prize): 22 minuti,
+attori ripresi su un palco con 100 camere 8K, ricostruzione affidata a
+un'azienda specializzata, riproduzione su visore. Rispetto a quel livello
+mancano, in ordine di peso:
+
+1. **Camere.** Con 3–4 camere il programma deve indovinare tutto ciò che sta
+   tra un punto di vista e l'altro, e nessun software lo compensa. Un
+   obiettivo intermedio realistico sono 16–24 camere sincronizzate via
+   hardware, con luce uniforme.
+2. **Durata.** Oggi il programma è tarato su pochi secondi (vedi
+   [Limiti noti](#limiti-noti)): servono la ricostruzione a spezzoni e un
+   player che carichi la scena a pezzi, compressa.
+3. **Resa.** Colore che cambia con il punto di vista, capelli e mani, bordi
+   puliti (maschere migliori), stabilità da un fotogramma all'altro.
+4. **Riproduzione.** Un visore o un motore grafico al posto della pagina web.
+
+Prima di tutto questo viene il collaudo su GPU e su riprese reali, che non è
+ancora stato fatto.
 
 ## Roadmap
 
