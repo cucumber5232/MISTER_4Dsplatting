@@ -148,12 +148,31 @@ details.fold > .field-grid { margin-bottom: 20px; }
 details.fold .field-grid .field { margin-top: 8px; }
 details.fold .check { margin-top: 30px; }
 details.tech { margin-top: 28px; }
-/* The longer explanation of what a step asks: one term at a time, for whoever wants it. */
+/* How a step works: reference text, folded. */
 details.explain { margin-top: 18px; }
 dl.explain { display: grid; gap: 14px; max-width: 66ch; margin: 2px 0 20px; }
 dl.explain dt { font-weight: 600; }
 dl.explain dd { margin: 2px 0 0; color: var(--text-2); }
 dl.explain dd.explain-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; }
+
+/* The small "i" beside a request, and the note it opens next to itself. */
+.label-row, .check-row { display: flex; align-items: center; gap: 2px; }
+.field > .label-row { margin-bottom: 6px; }
+.label-row label { font-weight: 600; }
+.check-row { align-items: flex-start; }
+.check-row .info { margin-top: 22px; }
+.info { display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; margin: -4px 0 -4px 2px;
+  padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-3); cursor: pointer;
+  vertical-align: middle; }
+.info svg { width: 18px; height: 18px; stroke-width: 1.8; }
+.info:hover { color: var(--accent); background: var(--fill-hover); }
+.info.open { color: var(--accent); background: var(--accent-soft); }
+.tip { position: fixed; inset: auto; margin: 0; width: min(380px, calc(100vw - 24px)); max-height: min(60vh, 420px);
+  padding: 14px 16px; overflow: auto; font-size: 13.5px; line-height: 1.5; background: rgba(255, 255, 255, .82);
+  opacity: 0; }
+.tip.placed { opacity: 1; }
+.tip p + p { margin-top: 8px; }
+.tip::backdrop { background: transparent; }
 details.inner { margin-top: 14px; }
 details.inner > table { margin: 0 0 16px; }
 .outcome { scroll-margin-top: 16px; }
@@ -188,7 +207,7 @@ pre.log { max-height: 320px; margin: 0 0 20px; padding: 14px 16px; overflow: aut
   .step-link { grid-template-columns: 26px auto 20px; min-width: 190px; }
   .stage { padding: 24px 20px 32px; overflow: visible; }
   .step h2 { font-size: 24px; }
-  .toast { position: fixed; }
+  .toast, .tip { position: fixed; }
   .path-row { flex-wrap: wrap; }
   .path-row input { flex-basis: 100%; }
 }

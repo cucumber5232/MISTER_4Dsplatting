@@ -63,8 +63,9 @@ Il lavoro è diviso in sei passi, che il programma propone uno dopo l'altro.
    guarda la scena e ci si gira intorno, e un breve video dimostrativo.
 
 Dopo ogni passo il programma dice com'è andata e, se qualcosa non va, che cosa
-conviene rifare. In ogni passo la voce "Che cosa viene chiesto, in dettaglio"
-spiega meglio ogni richiesta.
+conviene rifare. Accanto a ogni richiesta c'è una piccola "i": premendola
+compare la spiegazione di quella richiesta. La voce "Come funziona questo
+passo" racconta il resto.
 
 ## Che cosa si ottiene
 

@@ -20,6 +20,8 @@
   </svg>
 </div>
 
+<svg hidden><symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.2v.6"/></symbol></svg>
+
 <header class="panel topbar">
   <div class="brand">
     <p class="eyebrow">MISTER Smart Innovation</p>
@@ -45,21 +47,8 @@
     <h2 id="t-progetto">Dove salviamo il lavoro</h2>
     <p class="lead">Scegli una cartella vuota, oppure un progetto già iniziato. Lì finiscono i file di lavoro
       e il risultato: i video originali non vengono mai modificati.</p>
-    <details class="fold explain">
-      <summary>Che cosa viene chiesto, in dettaglio</summary>
-      <dl class="explain">
-        <div><dt>La cartella del progetto</dt>
-          <dd>È il posto dove il programma scrive tutto quello che produce: le immagini estratte dai video, la calibrazione, la scena e il risultato. Usa una cartella diversa per ogni ripresa. I video originali restano dove sono e non vengono toccati.</dd></div>
-        <div><dt>Dove metterla</dt>
-          <dd>Su un disco interno veloce e con molto spazio libero. Da ogni video vengono estratte tutte le immagini, una per fotogramma: pochi secondi di ripresa in alta risoluzione con più camere occupano già alcuni gigabyte.</dd></div>
-        <div><dt>Riprendere un lavoro</dt>
-          <dd>Indicando una cartella già usata, il programma ritrova le scelte fatte e i passi già completati, e riparte da lì.</dd></div>
-        <div><dt>Questo computer</dt>
-          <dd>Le schede grafiche NVIDIA fanno il lavoro pesante della ricostruzione: senza, si può solo provare il percorso in versione ridotta. FFmpeg è il programma che legge i file video: se manca va rilanciata l'installazione.</dd></div>
-      </dl>
-    </details>
     <div class="field">
-      <label for="projectPath">Cartella del progetto</label>
+      <div class="label-row"><label for="projectPath">Cartella del progetto</label><button class="info" type="button" popovertarget="tip-project" aria-label="Spiegazione: cartella del progetto"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
       <div class="path-row">
         <input id="projectPath" type="text" autocomplete="off" spellcheck="false"
                placeholder="Per esempio D:\Riprese\prova-12-novembre">
@@ -69,7 +58,7 @@
       <p class="hint" id="projectHint">Se la cartella non esiste viene creata.</p>
     </div>
     <div class="result" id="computer">
-      <h3>Questo computer</h3>
+      <h3>Questo computer<button class="info" type="button" popovertarget="tip-computer" aria-label="Spiegazione: questo computer"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></h3>
       <dl class="rows">
         <div><dt>Schede grafiche</dt><dd id="sysGpu">controllo in corso…</dd></div>
         <div><dt>FFmpeg (lettura dei video)</dt><dd id="sysFfmpeg">–</dd></div>
@@ -86,27 +75,19 @@
       camera. Il nome del file è il nome della camera e deve essere lo stesso nelle tre cartelle
       (cam01, cam02, …).</p>
     <details class="fold explain">
-      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <summary>Come funziona questo passo</summary>
       <dl class="explain">
         <div><dt>Perché tre riprese</dt>
           <dd>Il pannello serve a capire dove si trova e come è orientata ogni camera. Il set vuoto serve a distinguere il soggetto dallo sfondo. La ripresa del soggetto è la scena da ricostruire. Tra una ripresa e l'altra le camere non vanno toccate: stessa posizione, stesso zoom, stesso fuoco, stessa risoluzione. Se una camera viene spostata, le tre riprese vanno rifatte.</dd></div>
         <div><dt>Come preparare le cartelle</dt>
           <dd>Una cartella per ripresa, con dentro un file video per camera. Il nome del file è il nome della camera e deve essere identico nelle tre cartelle: per esempio cam01.mp4, cam02.mp4, cam03.mp4. Vanno bene i formati video comuni (MP4, MOV, MKV, MXF).</dd></div>
-        <div><dt>Pannello di calibrazione</dt>
-          <dd>Una persona muove lentamente il pannello stampato dentro lo spazio in cui starà il soggetto, a varie altezze e inclinandolo in direzioni diverse, per 30–60 secondi. Ogni camera deve vederlo più volte, e ogni volta insieme a una camera vicina: è così che le camere vengono collegate tra loro. Il file del pannello da stampare si crea al passo 03.</dd></div>
-        <div><dt>Set vuoto</dt>
-          <dd>Qualche secondo dello spazio di ripresa senza nessuno dentro, con le stesse luci e le stesse impostazioni della ripresa vera. Tutto ciò che cambia rispetto a questo momento verrà considerato parte del soggetto.</dd></div>
-        <div><dt>Sincronizzazione</dt>
-          <dd>Tutte le camere devono mostrare lo stesso istante nello stesso fotogramma. Con trigger o genlock lo fanno già: scegli «Via hardware». Altrimenti il programma riallinea i video cercando un evento comune: un battito di mani forte e secco, se ogni camera registra l'audio, oppure un flash o una luce accesa di colpo, visibile da tutte. L'evento va fatto all'inizio della ripresa del pannello e di quella del soggetto. Il riallineamento è preciso al fotogramma: può restare uno scarto più piccolo, che conta solo con movimenti veloci e si può correggere al passo 05.</dd></div>
-        <div><dt>Fotogrammi da scartare all'inizio</dt>
-          <dd>Dopo l'allineamento, i primi fotogrammi contengono il battito di mani o il flash, e spesso il soggetto che si mette in posizione. Indica quanti saltarne: a 30 fotogrammi al secondo, 30 fotogrammi sono un secondo.</dd></div>
-        <div><dt>Che cosa fa questo passo</dt>
+        <div><dt>Che cosa fa il programma</dt>
           <dd>Controlla che i video abbiano la stessa cadenza e la stessa risoluzione, li allinea e ne estrae le immagini. Se una camera ha perso dei fotogrammi durante la registrazione lo segnala, e quegli istanti vengono scartati.</dd></div>
       </dl>
     </details>
     <ol class="clips">
       <li data-clip="calib">
-        <div class="clip-head"><h3>Pannello di calibrazione</h3>
+        <div class="clip-head"><h3>Pannello di calibrazione<button class="info" type="button" popovertarget="tip-calib" aria-label="Spiegazione: pannello di calibrazione"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></h3>
           <p class="hint">Il pannello a riquadri mosso dentro il volume di ripresa.</p></div>
         <div class="path-row"><input type="text" data-path aria-label="Cartella del pannello di calibrazione"
           autocomplete="off" spellcheck="false" placeholder="Cartella con i video">
@@ -114,7 +95,7 @@
         <p class="found" data-found></p>
       </li>
       <li data-clip="empty">
-        <div class="clip-head"><h3>Set vuoto</h3>
+        <div class="clip-head"><h3>Set vuoto<button class="info" type="button" popovertarget="tip-empty" aria-label="Spiegazione: set vuoto"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></h3>
           <p class="hint">Pochi secondi senza soggetto, con la stessa luce della ripresa.</p></div>
         <div class="path-row"><input type="text" data-path aria-label="Cartella del set vuoto"
           autocomplete="off" spellcheck="false" placeholder="Cartella con i video">
@@ -122,7 +103,7 @@
         <p class="found" data-found></p>
       </li>
       <li data-clip="take">
-        <div class="clip-head"><h3>Ripresa del soggetto</h3>
+        <div class="clip-head"><h3>Ripresa del soggetto<button class="info" type="button" popovertarget="tip-take" aria-label="Spiegazione: ripresa del soggetto"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></h3>
           <p class="hint">La scena da ricostruire.</p></div>
         <div class="path-row"><input type="text" data-path aria-label="Cartella della ripresa del soggetto"
           autocomplete="off" spellcheck="false" placeholder="Cartella con i video">
@@ -133,7 +114,7 @@
     <div class="problem" id="videoProblems" role="alert" hidden></div>
 
     <fieldset class="field">
-      <legend>Come sono sincronizzate le camere?</legend>
+      <legend>Come sono sincronizzate le camere?<button class="info" type="button" popovertarget="tip-sync" aria-label="Spiegazione: sincronizzazione delle camere"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></legend>
       <div class="choices stack" role="radiogroup">
         <label><input type="radio" name="sync" value="none"><span><b>Via hardware</b>
           <small>trigger o genlock, registrazione avviata insieme</small></span></label>
@@ -144,7 +125,7 @@
       </div>
     </fieldset>
     <div class="field narrow">
-      <label for="opt-skip_frames">Fotogrammi da scartare all'inizio</label>
+      <div class="label-row"><label for="opt-skip_frames">Fotogrammi da scartare all'inizio</label><button class="info" type="button" popovertarget="tip-skip" aria-label="Spiegazione: fotogrammi da scartare"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
       <input id="opt-skip_frames" data-option="skip_frames" type="number" min="0" step="1" inputmode="numeric">
       <p class="hint">Per togliere il battito di mani, il flash o l'ingresso del soggetto.</p>
     </div>
@@ -163,7 +144,7 @@
     <p class="lead">Dal video del pannello si ricavano l'ottica e la posizione di ogni camera. Misura con un
       calibro un riquadro del pannello stampato: è il pannello a fissare la scala di tutto.</p>
     <details class="fold explain">
-      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <summary>Come funziona questo passo</summary>
       <dl class="explain">
         <div><dt>Il pannello</dt>
           <dd>È una scacchiera con un disegno diverso in ogni casella bianca: guardandolo, il programma riconosce ogni punto senza ambiguità. Va stampato al 100%, senza adattamento alla pagina, e incollato su un supporto rigido e opaco: se si piega o riflette la luce, la calibrazione peggiora. <span id="boardSize"></span></dd>
@@ -171,23 +152,17 @@
             <button id="makeBoard" class="btn" type="button">Crea il file del pannello da stampare</button>
             <span id="boardDone" class="hint" role="status"></span>
           </dd></div>
-        <div><dt>Lato di un riquadro</dt>
-          <dd>Dopo la stampa, misura con un calibro o un righello il lato di una casella (nere e bianche sono uguali) e scrivilo in centimetri. Le stampanti non rispettano mai esattamente le misure: conta quella reale. Da questo numero dipende la scala di tutta la scena: se è sbagliato la ricostruzione funziona lo stesso, ma le dimensioni non sono quelle vere.</dd></div>
-        <div><dt>Lato di un marker</dt>
-          <dd>Il marker è il quadrato con il disegno dentro la casella bianca, più piccolo della casella. Si misura allo stesso modo.</dd></div>
-        <div><dt>Opzioni avanzate</dt>
-          <dd>Il numero di riquadri e il tipo di marker descrivono com'è fatto il pannello: cambiali solo se usi un pannello diverso da quello creato qui. «Fotogramma con il pannello a terra» serve se durante la ripresa hai appoggiato per un momento il pannello piatto sul pavimento, al centro della scena e con la stampa verso l'alto: indicando quel fotogramma il pavimento diventa la quota zero. Il numero è quello del file immagine corrispondente, nella cartella lavoro/calibrazione/frames del progetto. Senza, la verticale viene dedotta dall'orientamento delle camere.</dd></div>
         <div><dt>Che cosa esce</dt>
           <dd>L'errore in pixel dice di quanto, in media, la posizione ricalcolata dei punti del pannello si scosta da quella vista nelle immagini: sotto mezzo pixel è buono, sopra un pixel la scena viene sfocata. La copertura dice se tra due camere vicine resta un angolo troppo ampio: da quel lato il soggetto può risultare più largo del vero.</dd></div>
       </dl>
     </details>
     <div class="field-grid">
       <div class="field narrow">
-        <label for="opt-square_cm">Lato di un riquadro</label>
+        <div class="label-row"><label for="opt-square_cm">Lato di un riquadro</label><button class="info" type="button" popovertarget="tip-square" aria-label="Spiegazione: lato di un riquadro"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
         <div class="unit"><input id="opt-square_cm" data-option="square_cm" type="number" min="0.5" step="0.01" inputmode="decimal"><span>cm</span></div>
       </div>
       <div class="field narrow">
-        <label for="opt-marker_cm">Lato di un marker</label>
+        <div class="label-row"><label for="opt-marker_cm">Lato di un marker</label><button class="info" type="button" popovertarget="tip-marker" aria-label="Spiegazione: lato di un marker"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
         <div class="unit"><input id="opt-marker_cm" data-option="marker_cm" type="number" min="0.5" step="0.01" inputmode="decimal"><span>cm</span></div>
         <p class="hint">Il quadrato con il disegno dentro il riquadro.</p>
       </div>
@@ -195,16 +170,16 @@
     <details class="fold advanced">
       <summary>Opzioni avanzate</summary>
       <div class="field-grid">
-        <div class="field narrow"><label for="opt-squares_x">Riquadri in larghezza</label>
+        <div class="field narrow"><div class="label-row"><label for="opt-squares_x">Riquadri in larghezza</label><button class="info" type="button" popovertarget="tip-board" aria-label="Spiegazione: riquadri in larghezza"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
           <input id="opt-squares_x" data-option="squares_x" type="number" min="3" step="1" inputmode="numeric"></div>
-        <div class="field narrow"><label for="opt-squares_y">Riquadri in altezza</label>
+        <div class="field narrow"><div class="label-row"><label for="opt-squares_y">Riquadri in altezza</label><button class="info" type="button" popovertarget="tip-board" aria-label="Spiegazione: riquadri in altezza"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
           <input id="opt-squares_y" data-option="squares_y" type="number" min="3" step="1" inputmode="numeric"></div>
-        <div class="field narrow"><label for="opt-dictionary">Tipo di marker</label>
+        <div class="field narrow"><div class="label-row"><label for="opt-dictionary">Tipo di marker</label><button class="info" type="button" popovertarget="tip-board" aria-label="Spiegazione: tipo di marker"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
           <select id="opt-dictionary" data-option="dictionary">
             <option>DICT_4X4_50</option><option>DICT_4X4_100</option><option>DICT_5X5_50</option>
             <option>DICT_5X5_100</option><option>DICT_6X6_50</option><option>DICT_6X6_100</option>
           </select></div>
-        <div class="field narrow"><label for="opt-floor_frame">Fotogramma con il pannello a terra</label>
+        <div class="field narrow"><div class="label-row"><label for="opt-floor_frame">Fotogramma con il pannello a terra</label><button class="info" type="button" popovertarget="tip-floor" aria-label="Spiegazione: fotogramma con il pannello a terra"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
           <input id="opt-floor_frame" data-option="floor_frame" data-empty="null" type="number" min="0" step="1" inputmode="numeric" placeholder="nessuno">
           <p class="hint">Se indicato, il pavimento diventa la quota zero.</p></div>
       </div>
@@ -218,24 +193,18 @@
     <p class="lead">Si corregge la distorsione delle ottiche e si separa il soggetto dallo sfondo, confrontando
       ogni fotogramma con il set vuoto.</p>
     <details class="fold explain">
-      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <summary>Come funziona questo passo</summary>
       <dl class="explain">
-        <div><dt>Risoluzione di lavoro</dt>
-          <dd>Le immagini possono essere usate così come sono oppure rimpicciolite. Piena dà il massimo dettaglio ma richiede più tempo e più memoria della scheda grafica. Metà va bene per le prime prove. Un quarto serve per controllare in fretta che tutto il percorso funzioni.</dd></div>
         <div><dt>Correzione delle ottiche</dt>
           <dd>Ogni obiettivo deforma un po' l'immagine, soprattutto ai bordi. Con i dati della calibrazione le immagini vengono raddrizzate, così quello che vedono camere diverse può essere confrontato.</dd></div>
         <div><dt>Maschere</dt>
           <dd>Per ogni immagine il programma segna quali punti appartengono al soggetto, confrontandola con il set vuoto: è soggetto ciò che è cambiato. Per questo le luci non devono cambiare tra set vuoto e ripresa, e il soggetto non dovrebbe avere lo stesso colore dello sfondo.</dd></div>
-        <div><dt>Soglia delle maschere</dt>
-          <dd>Dice quanto un punto deve essere diverso dal set vuoto per contare come soggetto. Con un valore basso si prende tutto il soggetto ma anche ombre e disturbi; con un valore alto la maschera è più pulita ma può perdere le parti del soggetto simili allo sfondo.</dd></div>
-        <div><dt>Ombre a terra</dt>
-          <dd>L'ombra che il soggetto proietta sul pavimento cambia l'immagine ma non è il soggetto, e di norma viene tolta. Se insieme all'ombra spariscono parti scure vicine al pavimento, come le scarpe, spunta «Non togliere le ombre a terra».</dd></div>
         <div><dt>Come leggere l'anteprima</dt>
           <dd>Ogni riga è una camera, in tre momenti della ripresa. Il soggetto deve restare intero e in piena luce, lo sfondo scurito. È il controllo più utile di tutto il percorso: una maschera sbagliata si ritrova nel risultato.</dd></div>
       </dl>
     </details>
     <fieldset class="field">
-      <legend>Risoluzione di lavoro</legend>
+      <legend>Risoluzione di lavoro<button class="info" type="button" popovertarget="tip-resolution" aria-label="Spiegazione: risoluzione di lavoro"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></legend>
       <div class="choices segmented" role="radiogroup">
         <label><input type="radio" name="downscale" value="1"><span>Piena</span></label>
         <label><input type="radio" name="downscale" value="2"><span>Metà</span></label>
@@ -248,10 +217,10 @@
     <details class="fold advanced">
       <summary>Opzioni avanzate</summary>
       <div class="field-grid">
-        <div class="field narrow"><label for="opt-mask_threshold">Soglia delle maschere</label>
+        <div class="field narrow"><div class="label-row"><label for="opt-mask_threshold">Soglia delle maschere</label><button class="info" type="button" popovertarget="tip-threshold" aria-label="Spiegazione: soglia delle maschere"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
           <input id="opt-mask_threshold" data-option="mask_threshold" type="number" min="4" max="120" step="1" inputmode="numeric">
           <p class="hint">Abbassala se nell'anteprima mancano parti del soggetto, alzala se resta dello sfondo.</p></div>
-        <label class="check"><input type="checkbox" data-option="keep_shadows"><span>Non togliere le ombre a terra</span></label>
+        <div class="check-row"><label class="check"><input type="checkbox" data-option="keep_shadows"><span>Non togliere le ombre a terra</span></label><button class="info" type="button" popovertarget="tip-shadows" aria-label="Spiegazione: ombre a terra"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
       </div>
     </details>
     <div class="actions"><button class="btn primary" type="button" data-run="preparazione">Prepara immagini e maschere</button></div>
@@ -266,37 +235,28 @@
       ricostruzione viene fatta in versione ridotta, con meno dettaglio e meno passi. Serve a provare il
       percorso, non a giudicare la qualità.</p>
     <details class="fold explain">
-      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <summary>Come funziona questo passo</summary>
       <dl class="explain">
         <div><dt>Che cosa succede</dt>
           <dd>Dalle sagome viste dalle camere si ricava prima una forma grezza del soggetto, istante per istante. Poi la scena viene descritta con moltissime piccole macchie colorate e sfumate, le gaussiane, che vengono spostate e corrette migliaia di volte finché le immagini calcolate dal punto di vista di ogni camera assomigliano il più possibile a quelle vere.</dd></div>
-        <div><dt>Camera di verifica</dt>
-          <dd>Una camera messa da parte non viene usata per costruire la scena. Alla fine il programma calcola che cosa si vedrebbe dal suo punto di vista e lo confronta con ciò che quella camera ha davvero ripreso: è una misura onesta della qualità. Ha un costo: con poche camere, toglierne una peggiora il risultato. Usala nelle prove; per la versione da consegnare scegli «Nessuna».</dd></div>
-        <div><dt>Scarti di tempo tra le camere</dt>
-          <dd>Senza sincronizzazione hardware le camere scattano in momenti leggermente diversi, fino a mezzo fotogramma. Con movimenti veloci le parti in moto appaiono sdoppiate. Spuntando la casella, il programma stima il piccolo ritardo di ogni camera e ne tiene conto. Funziona solo se nella scena c'è movimento.</dd></div>
-        <div><dt>Numero di passi</dt>
-          <dd>È il numero di correzioni successive. Lasciato vuoto, viene scelto in base alla durata della ripresa. Meno passi fanno prima ma lasciano la scena meno definita.</dd></div>
-        <div><dt>Schede grafiche da usare</dt>
-          <dd>Di norma vengono usate tutte insieme. Indicane una sola se l'altra serve per altro.</dd></div>
         <div><dt>Durata e interruzione</dt>
-          <dd>Durante il calcolo vedi l'avanzamento e una stima del tempo che resta. Puoi lasciare la pagina aperta e fare altro. Se chiudi il programma o premi «Interrompi», questo passo va rifatto dall'inizio; i passi precedenti restano validi.</dd></div>
+          <dd>Durante il calcolo vedi l'avanzamento e una stima del tempo che resta. Puoi lasciare la pagina aperta e fare altro. I passi precedenti restano sempre validi.</dd></div>
       </dl>
     </details>
     <div class="field">
-      <label for="opt-holdout">Camera di verifica</label>
+      <div class="label-row"><label for="opt-holdout">Camera di verifica</label><button class="info" type="button" popovertarget="tip-holdout" aria-label="Spiegazione: camera di verifica"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
       <select id="opt-holdout" data-option="holdout"><option value="">Nessuna: usa tutte le camere</option></select>
       <p class="hint">Una camera tenuta fuori permette di misurare la qualità da un punto di vista nuovo, ma
         toglie informazione. Per il risultato da consegnare scegli «Nessuna».</p>
     </div>
-    <label class="check"><input type="checkbox" data-option="learn_time_offsets">
-      <span>Le camere non hanno sincronizzazione hardware: stima gli scarti di tempo tra una e l'altra</span></label>
+    <div class="check-row"><label class="check"><input type="checkbox" data-option="learn_time_offsets"> <span>Le camere non hanno sincronizzazione hardware: stima gli scarti di tempo tra una e l'altra</span></label><button class="info" type="button" popovertarget="tip-offsets" aria-label="Spiegazione: scarti di tempo tra le camere"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
     <details class="fold advanced">
       <summary>Opzioni avanzate</summary>
       <div class="field-grid">
-        <div class="field narrow"><label for="opt-iterations">Numero di passi</label>
+        <div class="field narrow"><div class="label-row"><label for="opt-iterations">Numero di passi</label><button class="info" type="button" popovertarget="tip-iterations" aria-label="Spiegazione: numero di passi"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
           <input id="opt-iterations" data-option="iterations" data-empty="null" type="number" min="50" step="50" inputmode="numeric" placeholder="automatico">
           <p class="hint">Automatico: 250 per fotogramma, almeno 7000.</p></div>
-        <div class="field narrow"><label for="opt-devices">Schede grafiche da usare</label>
+        <div class="field narrow"><div class="label-row"><label for="opt-devices">Schede grafiche da usare</label><button class="info" type="button" popovertarget="tip-devices" aria-label="Spiegazione: schede grafiche da usare"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
           <input id="opt-devices" data-option="devices" type="text" autocomplete="off" spellcheck="false" placeholder="tutte">
           <p class="hint">Per esempio cuda:0 per usarne una sola.</p></div>
       </div>
@@ -310,7 +270,7 @@
     <p class="lead">Si creano il player, un file unico da aprire con doppio clic, e un video dimostrativo.
       Se hai tenuto una camera di verifica viene misurata anche la qualità.</p>
     <details class="fold explain">
-      <summary>Che cosa viene chiesto, in dettaglio</summary>
+      <summary>Come funziona questo passo</summary>
       <dl class="explain">
         <div><dt>Il player</dt>
           <dd>È un solo file, player.html, che contiene sia la scena sia il programma per guardarla. Si apre con doppio clic in un browser recente, anche su un altro computer e senza connessione. Dentro si può far partire e fermare la scena, girarle intorno e guardarla dal punto di vista di ciascuna camera.</dd></div>
@@ -325,6 +285,27 @@
     <div class="actions"><button class="btn primary" type="button" data-run="risultato">Crea player e video</button></div>
   </section>
 </main>
+
+<div id="tips">
+    <div id="tip-project" class="panel tip" popover><p>È il posto dove il programma scrive tutto quello che produce: le immagini estratte dai video, la calibrazione, la scena e il risultato. Usa una cartella diversa per ogni ripresa.</p><p>Mettila su un disco interno veloce e con molto spazio: da ogni video vengono estratte tutte le immagini, e pochi secondi in alta risoluzione con più camere occupano già alcuni gigabyte.</p><p>Indicando una cartella già usata, il programma ritrova le scelte fatte e i passi completati, e riparte da lì.</p></div>
+    <div id="tip-computer" class="panel tip" popover><p>Le schede grafiche NVIDIA fanno il lavoro pesante della ricostruzione: senza, si può solo provare il percorso in versione ridotta.</p><p>FFmpeg è il programma che legge i file video: se manca va rilanciata l'installazione.</p></div>
+    <div id="tip-calib" class="panel tip" popover><p>Una persona muove lentamente il pannello stampato dentro lo spazio in cui starà il soggetto, a varie altezze e inclinandolo in direzioni diverse, per 30–60 secondi.</p><p>Ogni camera deve vederlo più volte, e ogni volta insieme a una camera vicina: è così che le camere vengono collegate tra loro. Il file del pannello da stampare si crea al passo 03.</p></div>
+    <div id="tip-empty" class="panel tip" popover><p>Qualche secondo dello spazio di ripresa senza nessuno dentro, con le stesse luci e le stesse impostazioni della ripresa vera.</p><p>Tutto ciò che cambia rispetto a questo momento verrà considerato parte del soggetto: se cambia la luce o viene spostato un oggetto, il set vuoto va rifatto.</p></div>
+    <div id="tip-take" class="panel tip" popover><p>Il soggetto deve restare dentro lo spazio inquadrato da tutte le camere per tutta la ripresa. Aiutano abiti opachi e con una trama; meglio evitare colori simili allo sfondo.</p><p>La ripresa può durare quanto serve: quelle lunghe vengono ricostruite a spezzoni, e il tempo di calcolo e lo spazio su disco crescono in proporzione alla durata.</p></div>
+    <div id="tip-sync" class="panel tip" popover><p>Tutte le camere devono mostrare lo stesso istante nello stesso fotogramma. Con trigger o genlock lo fanno già: scegli «Via hardware».</p><p>Altrimenti il programma riallinea i video cercando un evento comune: un battito di mani forte e secco, se ogni camera registra l'audio, oppure un flash o una luce accesa di colpo, visibile da tutte. L'evento va fatto all'inizio della ripresa del pannello e di quella del soggetto.</p><p>Il riallineamento è preciso al fotogramma: può restare uno scarto più piccolo, che conta solo con movimenti veloci e si può correggere al passo 05.</p></div>
+    <div id="tip-skip" class="panel tip" popover><p>Dopo l'allineamento, i primi fotogrammi contengono il battito di mani o il flash, e spesso il soggetto che si mette in posizione. Indica quanti saltarne: a 30 fotogrammi al secondo, 30 fotogrammi sono un secondo.</p></div>
+    <div id="tip-square" class="panel tip" popover><p>Dopo la stampa, misura con un calibro o un righello il lato di una casella (nere e bianche sono uguali) e scrivilo in centimetri. Le stampanti non rispettano mai esattamente le misure: conta quella reale.</p><p>Da questo numero dipende la scala di tutta la scena: se è sbagliato la ricostruzione funziona lo stesso, ma le dimensioni non sono quelle vere.</p></div>
+    <div id="tip-marker" class="panel tip" popover><p>Il marker è il quadrato con il disegno dentro la casella bianca, più piccolo della casella. Si misura allo stesso modo, dopo la stampa.</p></div>
+    <div id="tip-board" class="panel tip" popover><p>Il numero di riquadri e il tipo di marker descrivono com'è fatto il pannello. Cambiali solo se usi un pannello diverso da quello creato qui: devono corrispondere a quello stampato, altrimenti non viene riconosciuto.</p></div>
+    <div id="tip-floor" class="panel tip" popover><p>Serve se durante la ripresa hai appoggiato per un momento il pannello piatto sul pavimento, al centro della scena e con la stampa verso l'alto: indicando quel fotogramma, il pavimento diventa la quota zero.</p><p>Il numero è quello del file immagine corrispondente, nella cartella lavoro/calibrazione/frames del progetto. Senza, la verticale viene dedotta dall'orientamento delle camere.</p></div>
+    <div id="tip-resolution" class="panel tip" popover><p>Le immagini possono essere usate così come sono oppure rimpicciolite. Piena dà il massimo dettaglio ma richiede più tempo e più memoria della scheda grafica.</p><p>Metà va bene per le prime prove. Un quarto serve per controllare in fretta che tutto il percorso funzioni.</p></div>
+    <div id="tip-threshold" class="panel tip" popover><p>Dice quanto un punto deve essere diverso dal set vuoto per contare come soggetto.</p><p>Con un valore basso si prende tutto il soggetto ma anche ombre e disturbi; con un valore alto la maschera è più pulita ma può perdere le parti del soggetto simili allo sfondo.</p></div>
+    <div id="tip-shadows" class="panel tip" popover><p>L'ombra che il soggetto proietta sul pavimento cambia l'immagine ma non è il soggetto, e di norma viene tolta.</p><p>Se insieme all'ombra spariscono parti scure vicine al pavimento, come le scarpe, spunta questa casella.</p></div>
+    <div id="tip-holdout" class="panel tip" popover><p>Una camera messa da parte non viene usata per costruire la scena. Alla fine il programma calcola che cosa si vedrebbe dal suo punto di vista e lo confronta con ciò che quella camera ha davvero ripreso: è una misura onesta della qualità.</p><p>Ha un costo: con poche camere, toglierne una peggiora il risultato. Usala nelle prove; per la versione da consegnare scegli «Nessuna».</p></div>
+    <div id="tip-offsets" class="panel tip" popover><p>Senza sincronizzazione hardware le camere scattano in momenti leggermente diversi, fino a mezzo fotogramma. Con movimenti veloci le parti in moto appaiono sdoppiate.</p><p>Spuntando la casella, il programma stima il piccolo ritardo di ogni camera e ne tiene conto. Funziona solo se nella scena c'è movimento.</p></div>
+    <div id="tip-iterations" class="panel tip" popover><p>È il numero di correzioni successive che il programma fa sulla scena. Lasciato vuoto, viene scelto in base alla durata della ripresa.</p><p>Meno passi fanno prima ma lasciano la scena meno definita.</p></div>
+    <div id="tip-devices" class="panel tip" popover><p>Di norma vengono usate tutte insieme. Indicane una sola, per esempio cuda:0, se l'altra serve per altro.</p></div>
+</div>
 
 <div id="toast" class="panel toast" role="alert" hidden></div>
 <script src="app.js"></script>

@@ -787,6 +787,36 @@
       }
     });
 
+    // The small "i" beside a request opens its note right there. The browser
+    // handles opening, Esc and clicking elsewhere; here the note is only placed.
+    let asked = null;
+    document.addEventListener('click', (event) => {
+      const button = event.target.closest('.info');
+      if (button) asked = button;
+    }, true);
+    document.addEventListener('toggle', (event) => {
+      const tip = event.target;
+      if (!(tip instanceof HTMLElement) || !tip.classList.contains('tip')) return;
+      const button = asked && asked.getAttribute('popovertarget') === tip.id
+        ? asked : $(`[popovertarget="${tip.id}"]`);
+      const open = event.newState === 'open';
+      for (const other of $$(`[popovertarget="${tip.id}"]`)) other.classList.toggle('open', open && other === button);
+      tip.classList.remove('placed');
+      if (!open) return;
+      const anchor = button.getBoundingClientRect();
+      const box = tip.getBoundingClientRect();
+      const left = Math.min(Math.max(12, anchor.left - 14), window.innerWidth - box.width - 12);
+      let top = anchor.bottom + 8;
+      if (top + box.height > window.innerHeight - 12) top = Math.max(12, anchor.top - 8 - box.height);
+      tip.style.left = `${Math.round(left)}px`;
+      tip.style.top = `${Math.round(top)}px`;
+      tip.classList.add('placed');
+    }, true);
+    const closeTips = () => { for (const tip of $$('.tip:popover-open')) tip.hidePopover(); };
+    $('#stage').addEventListener('scroll', closeTips, { passive: true });
+    window.addEventListener('scroll', closeTips, { passive: true });
+    window.addEventListener('resize', closeTips);
+
     $('#useProject').addEventListener('click', openProject);
     $('#projectPath').addEventListener('keydown', (event) => { if (event.key === 'Enter') openProject(); });
     $('#pickProject').addEventListener('click', async (event) => {

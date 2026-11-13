@@ -172,10 +172,10 @@ richiuse in «Opzioni avanzate».
 | 05 | Ricostruzione | la camera di verifica (facoltativa) | avanzamento con tempo residuo, poi riepilogo della scena |
 | 06 | Risultato | niente | player, video dimostrativo e, con la camera di verifica, qualità misurata |
 
-- In ogni passo la voce «Che cosa viene chiesto, in dettaglio» spiega ogni
-  richiesta: che cos'è, come prepararla, che cosa succede se è sbagliata. Nel
-  passo Calibrazione c'è anche il pulsante che crea il file del pannello da
-  stampare.
+- Accanto a ogni richiesta una piccola «i» apre la sua spiegazione: che
+  cos'è, come prepararla, che cosa succede se è sbagliata. La voce «Come
+  funziona questo passo» racconta il resto; nel passo Calibrazione contiene
+  anche il pulsante che crea il file del pannello da stampare.
 - Studio **non è una seconda implementazione**: ogni passo lancia i comandi
   `mister4d` descritti più sotto, compilandone gli argomenti e traducendone
   l'esito. Quello che si ottiene dalla pagina e dal terminale è identico.
