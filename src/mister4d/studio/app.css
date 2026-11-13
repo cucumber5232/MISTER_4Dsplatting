@@ -6,10 +6,10 @@ html, body { overflow: hidden; }
 /* The rig drawing gives the frosted panels something to sit on, and says what the tool is for. */
 .backdrop { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
 .backdrop svg { position: absolute; right: -150px; bottom: -190px; width: 820px; height: 820px;
-  fill: none; stroke: var(--mister-viola); stroke-width: 2; opacity: .5; }
-.backdrop rect, .backdrop .lens { fill: rgba(100, 83, 148, .10); }
+  fill: none; stroke: var(--mister-blu); stroke-width: 2; opacity: .5; }
+.backdrop rect, .backdrop .lens { fill: rgba(8, 106, 175, .10); }
 .backdrop .raised { opacity: .55; }
-.backdrop .subject { fill: rgba(36, 135, 127, .22); stroke: var(--mister-verde); }
+.backdrop .subject { fill: rgba(14, 45, 84, .16); stroke: var(--mister-navy); }
 
 .panel { position: fixed; z-index: 1; }
 
@@ -88,7 +88,7 @@ input[type="text"]:disabled, input[type="number"]:disabled, select:disabled,
 input:disabled, select:disabled { cursor: not-allowed; }
 .lead + .note { margin-top: 12px; }
 .check { display: flex; align-items: flex-start; gap: 10px; margin-top: 24px; max-width: 60ch; cursor: pointer; }
-.check input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--mister-viola); }
+.check input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--primary); }
 
 .clips { margin-top: 24px; display: grid; gap: 10px; }
 .clips li { padding: 16px 18px; border: 1px solid var(--stroke); border-radius: var(--r-control); background: var(--glass-solid); }
@@ -153,7 +153,7 @@ details.inner > table { margin: 0 0 16px; }
 .outcome { scroll-margin-top: 16px; }
 .outcome:empty { display: none; }
 pre.log { max-height: 320px; margin: 0 0 20px; padding: 14px 16px; overflow: auto; border-radius: 8px;
-  background: var(--mister-inchiostro); color: #dcd8ea; font: 12px/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; }
+  background: var(--mister-navy); color: #dce6f1; font: 12px/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; }
 
 .toast { left: 50%; bottom: 28px; z-index: 5; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px));
   padding: 12px 18px; border-color: var(--danger); background: var(--glass-solid); }

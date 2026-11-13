@@ -1,55 +1,59 @@
 /* MISTER 4D: shared visual language of the player and of the Studio.
 
-   The palette comes from the MISTER Smart Innovation working guide: violet for
-   identity and primary actions, teal for what is selected or in progress, ink
-   for text, lavender for quiet surfaces. Change the four brand values below
-   and both applications follow.
+   The palette is the one MISTER Smart Innovation uses in public: the blue of
+   the logo, and the navy, ice grey, ink and brick red of labmister.it. Change
+   the five brand values below and both applications follow.
 
    Roles, not decoration:
-   - violet (--primary): the one main action of a view, and identity
-   - teal (--accent*): state - selected, running, completed, the position in time
-   - neutrals are ink / lavender tints, never plain grey
+   - navy (--primary, --heading): titles and the one main action of a view
+   - logo blue (--accent*, --identity): labels and state - selected, running,
+     completed, the position in time
+   - brick red (--danger): only where something needs attention
+   - neutrals are ink / ice tints of the navy, never plain grey
    Every text / background pair used here meets WCAG AA (4.5:1). */
 
 :root {
-  --mister-viola: #645394;
-  --mister-verde: #24877f;
-  --mister-inchiostro: #242434;
-  --mister-lavanda: #f0edf7;
+  --mister-navy: #0e2d54;
+  --mister-blu: #086aaf;
+  --mister-rosso: #be554b;
+  --mister-inchiostro: #13181c;
+  --mister-ghiaccio: #f0f4f7;
 
-  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* The typefaces of the MISTER site when the computer has them, otherwise the system ones. */
+  --font: "Open Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-heading: "Manrope", "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
-  --r-panel: 14px; --r-control: 9px; --r-pill: 999px;
+  --r-panel: 14px; --r-control: 10px; --r-pill: 999px;
   --gap: 12px; --edge: 16px; --control: 40px;
   --ease: cubic-bezier(.2, .7, .2, 1);
 }
 
 [data-theme="dark"] {
-  --bg: #15131d;
-  --glass: rgba(30, 27, 44, .62); --glass-solid: rgba(30, 27, 44, .95);
-  --stroke: rgba(240, 237, 247, .12); --stroke-strong: rgba(240, 237, 247, .26);
-  --text: #f6f4fb; --text-2: #c5bfd6; --text-3: #a199ba;
-  --fill: rgba(240, 237, 247, .07); --fill-hover: rgba(240, 237, 247, .13); --track: rgba(240, 237, 247, .20);
-  --primary: var(--mister-viola); --primary-hover: #7463a8; --on-primary: #ffffff;
-  --identity: #b9addf;                        /* violet light enough to be read on ink */
-  --accent: #5cc5ba; --accent-fill: #2d9d93; --accent-soft: rgba(45, 157, 147, .22);
-  --selected: rgba(100, 83, 148, .42); --selected-stroke: #9b90ba;
-  --danger: #ff9d94; --warning: #f2c063;
-  --shadow: 0 14px 44px rgba(8, 6, 16, .55);
+  --bg: #0a1626;                              /* the navy, deepened */
+  --glass: rgba(15, 32, 56, .62); --glass-solid: rgba(15, 32, 56, .95);
+  --stroke: rgba(240, 244, 247, .12); --stroke-strong: rgba(240, 244, 247, .26);
+  --text: #f4f7fa; --text-2: #c2cedb; --text-3: #94a4b8; --heading: #ffffff;
+  --fill: rgba(240, 244, 247, .07); --fill-hover: rgba(240, 244, 247, .13); --track: rgba(240, 244, 247, .20);
+  --primary: var(--mister-ghiaccio); --primary-hover: #ffffff; --on-primary: var(--mister-navy);
+  --identity: #6db6ea;                        /* the logo blue, light enough to be read on navy */
+  --accent: #6db6ea; --accent-fill: #1d86d0; --accent-soft: rgba(29, 134, 208, .24);
+  --selected: rgba(8, 106, 175, .38); --selected-stroke: #6db6ea;
+  --danger: #f0998f; --warning: #f2c063;
+  --shadow: 0 14px 44px rgba(3, 9, 18, .55);
 }
 
 [data-theme="light"] {
-  --bg: var(--mister-lavanda);
+  --bg: var(--mister-ghiaccio);
   --glass: rgba(255, 255, 255, .68); --glass-solid: rgba(255, 255, 255, .96);
-  --stroke: rgba(36, 36, 52, .10); --stroke-strong: rgba(36, 36, 52, .24);
-  --text: var(--mister-inchiostro); --text-2: #4f4d66; --text-3: #6b6884;
-  --fill: rgba(100, 83, 148, .07); --fill-hover: rgba(100, 83, 148, .13); --track: rgba(36, 36, 52, .16);
-  --primary: var(--mister-viola); --primary-hover: #55467f; --on-primary: #ffffff;
-  --identity: var(--mister-viola);
-  --accent: #1c6e68; --accent-fill: var(--mister-verde); --accent-soft: rgba(36, 135, 127, .13);
-  --selected: rgba(100, 83, 148, .12); --selected-stroke: var(--mister-viola);
-  --danger: #a8322b; --warning: #8a5a00;
-  --shadow: 0 14px 40px rgba(60, 48, 100, .16);
+  --stroke: rgba(14, 45, 84, .10); --stroke-strong: rgba(14, 45, 84, .26);
+  --text: var(--mister-inchiostro); --text-2: #3d4a5c; --text-3: #5d6a7c; --heading: var(--mister-navy);
+  --fill: rgba(14, 45, 84, .05); --fill-hover: rgba(14, 45, 84, .10); --track: rgba(14, 45, 84, .16);
+  --primary: var(--mister-navy); --primary-hover: #1f3b72; --on-primary: #ffffff;
+  --identity: var(--mister-blu);
+  --accent: var(--mister-blu); --accent-fill: var(--mister-blu); --accent-soft: rgba(8, 106, 175, .12);
+  --selected: rgba(8, 106, 175, .10); --selected-stroke: var(--mister-blu);
+  --danger: #a8463d; --warning: #8a5a00;      /* the brick red, darkened to be read as text */
+  --shadow: 0 14px 40px rgba(14, 45, 84, .14);
 }
 
 /* ------------------------------------------------------------------ base */
@@ -58,6 +62,7 @@ html, body { margin: 0; height: 100%; }
 body { font: 14px/1.5 var(--font); color: var(--text); background: var(--bg);
   -webkit-font-smoothing: antialiased; }
 h1, h2, h3, p, dl, dd, ol, ul, figure { margin: 0; }
+h1, h2 { font-family: var(--font-heading); color: var(--heading); }
 ol, ul { padding: 0; list-style: none; }
 button, select, input, textarea { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
@@ -105,7 +110,7 @@ select { padding-right: 32px; cursor: pointer; -webkit-appearance: none; appeara
     linear-gradient(135deg, currentColor 50%, transparent 50%);
   background-position: calc(100% - 17px) 17px, calc(100% - 12px) 17px;
   background-size: 5px 5px; background-repeat: no-repeat; }
-select option { color: #242434; background: #fff; }
+select option { color: #13181c; background: #fff; }
 
 input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: 0;
   background: transparent; cursor: pointer; --pct: 0%; }
@@ -135,7 +140,7 @@ input[type="range"]:focus-visible { outline-offset: 4px; border-radius: 6px; }
 .segmented { flex-wrap: nowrap; gap: 0; padding: 3px; border: 1px solid var(--stroke);
   border-radius: var(--r-control); background: var(--fill); }
 .segmented span { min-height: 32px; border: 0; background: transparent; border-radius: 6px; }
-.segmented input:checked + span { border: 0; background: var(--glass-solid); box-shadow: 0 1px 3px rgba(20, 14, 40, .22); }
+.segmented input:checked + span { border: 0; background: var(--glass-solid); box-shadow: 0 1px 3px rgba(14, 45, 84, .22); }
 
 /* Accordions: reference material and advanced options stay folded away. */
 details.fold > summary { display: flex; align-items: center; justify-content: space-between; min-height: 48px;

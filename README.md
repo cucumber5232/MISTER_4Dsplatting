@@ -196,10 +196,11 @@ risultato/        player.html, orbita.mp4 e run/ (scena e misure)
 registro/         testo completo di ogni passo
 ```
 
-I colori di Studio e del player sono quelli della guida operativa MISTER
-(viola, verde acqua, inchiostro, lavanda) e stanno in un solo file,
-`src/mister4d/viewer/theme.css`: cambiando i quattro valori `--mister-*`
-cambiano entrambe le applicazioni.
+I colori di Studio e del player sono quelli che MISTER Smart Innovation usa
+in pubblico: il blu del logo, e il navy, il grigio ghiaccio, l'inchiostro e
+il rosso mattone del sito labmister.it. Stanno in un solo file,
+`src/mister4d/viewer/theme.css`: cambiando i cinque valori `--mister-*`
+cambiano entrambe le applicazioni. Il logo non è incluso nel repository.
 
 ## Prova senza camere (dati sintetici)
 
