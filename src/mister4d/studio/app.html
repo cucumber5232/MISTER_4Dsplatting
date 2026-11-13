@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="studio-token" content="{{TOKEN}}">
+<title>MISTER 4D Studio</title>
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body data-theme="light">
+
+<!-- The rig of the MISTER guide: eight cameras around the subject, four raised and offset. -->
+<div class="backdrop" aria-hidden="true">
+  <svg viewBox="0 0 780 780">
+    <circle cx="390" cy="390" r="250"/>
+    <circle cx="390" cy="390" r="318" stroke-dasharray="3 9"/>
+    <g id="rigCameras"></g>
+    <circle class="subject" cx="390" cy="390" r="26"/>
+  </svg>
+</div>
+
+<header class="panel topbar">
+  <div class="brand">
+    <p class="eyebrow">MISTER Smart Innovation</p>
+    <h1>4D Studio</h1>
+  </div>
+  <p id="projectName" class="project">Nessun progetto aperto</p>
+  <button id="openProject" class="btn quiet" type="button" hidden>Apri la cartella</button>
+  <button id="quit" class="btn quiet" type="button">Esci</button>
+</header>
+
+<nav class="panel rail" aria-label="Passi del lavoro">
+  <ol id="rail"></ol>
+  <div class="rail-foot">
+    <button id="runAll" class="btn" type="button" disabled>Esegui i passi rimanenti</button>
+    <p id="runAllHint" class="hint"></p>
+  </div>
+</nav>
+
+<main class="panel stage" id="stage" tabindex="-1">
+
+  <section class="step" data-step="progetto" aria-labelledby="t-progetto">
+    <p class="eyebrow">01 / Progetto</p>
+    <h2 id="t-progetto">Dove salviamo il lavoro</h2>
+    <p class="lead">Scegli una cartella vuota, oppure un progetto già iniziato. Lì finiscono i file di lavoro
+      e il risultato: i video originali non vengono mai modificati.</p>
+    <div class="field">
+      <label for="projectPath">Cartella del progetto</label>
+      <div class="path-row">
+        <input id="projectPath" type="text" autocomplete="off" spellcheck="false"
+               placeholder="Per esempio D:\Riprese\prova-12-novembre">
+        <button id="pickProject" class="btn" type="button">Sfoglia…</button>
+        <button id="useProject" class="btn primary" type="button">Apri</button>
+      </div>
+      <p class="hint" id="projectHint">Se la cartella non esiste viene creata.</p>
+    </div>
+    <div class="result" id="computer">
+      <h3>Questo computer</h3>
+      <dl class="rows">
+        <div><dt>Schede grafiche</dt><dd id="sysGpu">controllo in corso…</dd></div>
+        <div><dt>FFmpeg (lettura dei video)</dt><dd id="sysFfmpeg">–</dd></div>
+        <div><dt>Spazio libero nella cartella</dt><dd id="sysDisk">–</dd></div>
+      </dl>
+      <p class="note" id="sysNote" hidden></p>
+    </div>
+  </section>
+
+  <section class="step" data-step="video" aria-labelledby="t-video" hidden>
+    <p class="eyebrow">02 / Video</p>
+    <h2 id="t-video">Indica le riprese</h2>
+    <p class="lead">Servono tre riprese fatte con le stesse camere, ognuna in una cartella con un file per
+      camera. Il nome del file è il nome della camera e deve essere lo stesso nelle tre cartelle
+      (cam01, cam02, …).</p>
+    <ol class="clips">
+      <li data-clip="calib">
+        <div class="clip-head"><h3>Pannello di calibrazione</h3>
+          <p class="hint">Il pannello a riquadri mosso dentro il volume di ripresa.</p></div>
+        <div class="path-row"><input type="text" data-path aria-label="Cartella del pannello di calibrazione"
+          autocomplete="off" spellcheck="false" placeholder="Cartella con i video">
+          <button class="btn" type="button" data-pick>Sfoglia…</button></div>
+        <p class="found" data-found></p>
+      </li>
+      <li data-clip="empty">
+        <div class="clip-head"><h3>Set vuoto</h3>
+          <p class="hint">Pochi secondi senza soggetto, con la stessa luce della ripresa.</p></div>
+        <div class="path-row"><input type="text" data-path aria-label="Cartella del set vuoto"
+          autocomplete="off" spellcheck="false" placeholder="Cartella con i video">
+          <button class="btn" type="button" data-pick>Sfoglia…</button></div>
+        <p class="found" data-found></p>
+      </li>
+      <li data-clip="take">
+        <div class="clip-head"><h3>Ripresa del soggetto</h3>
+          <p class="hint">La scena da ricostruire.</p></div>
+        <div class="path-row"><input type="text" data-path aria-label="Cartella della ripresa del soggetto"
+          autocomplete="off" spellcheck="false" placeholder="Cartella con i video">
+          <button class="btn" type="button" data-pick>Sfoglia…</button></div>
+        <p class="found" data-found></p>
+      </li>
+    </ol>
+    <div class="problem" id="videoProblems" role="alert" hidden></div>
+
+    <fieldset class="field">
+      <legend>Come sono sincronizzate le camere?</legend>
+      <div class="choices stack" role="radiogroup">
+        <label><input type="radio" name="sync" value="none"><span><b>Via hardware</b>
+          <small>trigger o genlock, registrazione avviata insieme</small></span></label>
+        <label><input type="radio" name="sync" value="audio"><span><b>Battito di mani</b>
+          <small>all'inizio di ogni ripresa, con l'audio registrato</small></span></label>
+        <label><input type="radio" name="sync" value="flash"><span><b>Flash o luce accesa di colpo</b>
+          <small>visibile da tutte le camere</small></span></label>
+      </div>
+    </fieldset>
+    <div class="field narrow">
+      <label for="opt-skip_frames">Fotogrammi da scartare all'inizio</label>
+      <input id="opt-skip_frames" data-option="skip_frames" type="number" min="0" step="1" inputmode="numeric">
+      <p class="hint">Per togliere il battito di mani, il flash o l'ingresso del soggetto.</p>
+    </div>
+    <div class="actions"><button class="btn primary" type="button" data-run="video">Controlla i video ed estrai i fotogrammi</button></div>
+    <div class="aside" id="exampleBox" hidden>
+      <h3>Non hai ancora delle riprese?</h3>
+      <p>Puoi provare tutto il percorso con riprese di esempio: un manichino animato visto da quattro
+        camere virtuali, con pannello di calibrazione e set vuoto. Per crearle servono alcuni minuti.</p>
+      <div class="actions"><button id="makeExample" class="btn" type="button">Crea le riprese di esempio</button></div>
+    </div>
+  </section>
+
+  <section class="step" data-step="calibrazione" aria-labelledby="t-calibrazione" hidden>
+    <p class="eyebrow">03 / Calibrazione</p>
+    <h2 id="t-calibrazione">Dove guarda ogni camera</h2>
+    <p class="lead">Dal video del pannello si ricavano l'ottica e la posizione di ogni camera. Misura con un
+      calibro un riquadro del pannello stampato: è il pannello a fissare la scala di tutto.</p>
+    <div class="field-grid">
+      <div class="field narrow">
+        <label for="opt-square_cm">Lato di un riquadro</label>
+        <div class="unit"><input id="opt-square_cm" data-option="square_cm" type="number" min="0.5" step="0.01" inputmode="decimal"><span>cm</span></div>
+      </div>
+      <div class="field narrow">
+        <label for="opt-marker_cm">Lato di un marker</label>
+        <div class="unit"><input id="opt-marker_cm" data-option="marker_cm" type="number" min="0.5" step="0.01" inputmode="decimal"><span>cm</span></div>
+        <p class="hint">Il quadrato con il disegno dentro il riquadro.</p>
+      </div>
+    </div>
+    <details class="fold advanced">
+      <summary>Opzioni avanzate</summary>
+      <div class="field-grid">
+        <div class="field narrow"><label for="opt-squares_x">Riquadri in larghezza</label>
+          <input id="opt-squares_x" data-option="squares_x" type="number" min="3" step="1" inputmode="numeric"></div>
+        <div class="field narrow"><label for="opt-squares_y">Riquadri in altezza</label>
+          <input id="opt-squares_y" data-option="squares_y" type="number" min="3" step="1" inputmode="numeric"></div>
+        <div class="field narrow"><label for="opt-dictionary">Tipo di marker</label>
+          <select id="opt-dictionary" data-option="dictionary">
+            <option>DICT_4X4_50</option><option>DICT_4X4_100</option><option>DICT_5X5_50</option>
+            <option>DICT_5X5_100</option><option>DICT_6X6_50</option><option>DICT_6X6_100</option>
+          </select></div>
+        <div class="field narrow"><label for="opt-floor_frame">Fotogramma con il pannello a terra</label>
+          <input id="opt-floor_frame" data-option="floor_frame" data-empty="null" type="number" min="0" step="1" inputmode="numeric" placeholder="nessuno">
+          <p class="hint">Se indicato, il pavimento diventa la quota zero.</p></div>
+      </div>
+    </details>
+    <div class="actions"><button class="btn primary" type="button" data-run="calibrazione">Calibra le camere</button></div>
+  </section>
+
+  <section class="step" data-step="preparazione" aria-labelledby="t-preparazione" hidden>
+    <p class="eyebrow">04 / Preparazione</p>
+    <h2 id="t-preparazione">Isolare il soggetto</h2>
+    <p class="lead">Si corregge la distorsione delle ottiche e si separa il soggetto dallo sfondo, confrontando
+      ogni fotogramma con il set vuoto.</p>
+    <fieldset class="field">
+      <legend>Risoluzione di lavoro</legend>
+      <div class="choices segmented" role="radiogroup">
+        <label><input type="radio" name="downscale" value="1"><span>Piena</span></label>
+        <label><input type="radio" name="downscale" value="2"><span>Metà</span></label>
+        <label><input type="radio" name="downscale" value="4"><span>Un quarto</span></label>
+      </div>
+      <p class="hint">Più bassa è più veloce ma con meno dettaglio. Per una prima prova va bene metà.</p>
+      <p class="note warn" id="resolutionNote" hidden>Su questo computer non c'è una scheda grafica NVIDIA: scegli
+        «Un quarto», altrimenti la ricostruzione richiede molte ore.</p>
+    </fieldset>
+    <details class="fold advanced">
+      <summary>Opzioni avanzate</summary>
+      <div class="field-grid">
+        <div class="field narrow"><label for="opt-mask_threshold">Soglia delle maschere</label>
+          <input id="opt-mask_threshold" data-option="mask_threshold" type="number" min="4" max="120" step="1" inputmode="numeric">
+          <p class="hint">Abbassala se nell'anteprima mancano parti del soggetto, alzala se resta dello sfondo.</p></div>
+        <label class="check"><input type="checkbox" data-option="keep_shadows"><span>Non togliere le ombre a terra</span></label>
+      </div>
+    </details>
+    <div class="actions"><button class="btn primary" type="button" data-run="preparazione">Prepara immagini e maschere</button></div>
+  </section>
+
+  <section class="step" data-step="ricostruzione" aria-labelledby="t-ricostruzione" hidden>
+    <p class="eyebrow">05 / Ricostruzione</p>
+    <h2 id="t-ricostruzione">Costruire la scena 4D</h2>
+    <p class="lead">È il passo lungo: il computer ottimizza la scena usando tutte le schede grafiche. Secondo
+      la durata della ripresa e la risoluzione può richiedere da qualche minuto a qualche ora.</p>
+    <p class="note warn" id="reducedNote" hidden>Su questo computer non c'è una scheda grafica NVIDIA: la
+      ricostruzione viene fatta in versione ridotta, con meno dettaglio e meno passi. Serve a provare il
+      percorso, non a giudicare la qualità.</p>
+    <div class="field">
+      <label for="opt-holdout">Camera di verifica</label>
+      <select id="opt-holdout" data-option="holdout"><option value="">Nessuna: usa tutte le camere</option></select>
+      <p class="hint">Una camera tenuta fuori permette di misurare la qualità da un punto di vista nuovo, ma
+        toglie informazione. Per il risultato da consegnare scegli «Nessuna».</p>
+    </div>
+    <label class="check"><input type="checkbox" data-option="learn_time_offsets">
+      <span>Le camere non hanno sincronizzazione hardware: stima gli scarti di tempo tra una e l'altra</span></label>
+    <details class="fold advanced">
+      <summary>Opzioni avanzate</summary>
+      <div class="field-grid">
+        <div class="field narrow"><label for="opt-iterations">Numero di passi</label>
+          <input id="opt-iterations" data-option="iterations" data-empty="null" type="number" min="50" step="50" inputmode="numeric" placeholder="automatico">
+          <p class="hint">Automatico: 250 per fotogramma, almeno 7000.</p></div>
+        <div class="field narrow"><label for="opt-devices">Schede grafiche da usare</label>
+          <input id="opt-devices" data-option="devices" type="text" autocomplete="off" spellcheck="false" placeholder="tutte">
+          <p class="hint">Per esempio cuda:0 per usarne una sola.</p></div>
+      </div>
+    </details>
+    <div class="actions"><button class="btn primary" type="button" data-run="ricostruzione">Avvia la ricostruzione</button></div>
+  </section>
+
+  <section class="step" data-step="risultato" aria-labelledby="t-risultato" hidden>
+    <p class="eyebrow">06 / Risultato</p>
+    <h2 id="t-risultato">Guardare e consegnare</h2>
+    <p class="lead">Si creano il player, un file unico da aprire con doppio clic, e un video dimostrativo.
+      Se hai tenuto una camera di verifica viene misurata anche la qualità.</p>
+    <div class="actions"><button class="btn primary" type="button" data-run="risultato">Crea player e video</button></div>
+  </section>
+</main>
+
+<div id="toast" class="panel toast" role="alert" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

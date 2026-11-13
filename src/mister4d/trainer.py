@@ -521,5 +521,11 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
             f"{c} {v:+.2f} frames ({v * ms:+.1f} ms)" for c, v in meta["time_offsets"].items() if c != train_cams[0]))
     ckpt_path = out_dir / "ckpt.pt"
     save_checkpoint(ckpt_path, scene, cfg_dict, meta, iterations)
+    # The outcome in a small text file, for tools that should not have to load the checkpoint.
+    (out_dir / "train_summary.json").write_text(json.dumps({
+        "iterations": iterations, "seconds": round(time.time() - t_start, 1),
+        "gaussians": scene.num_gaussians, "frames": ds.num_frames, "fps": ds.fps,
+        "train_cameras": train_cams, "holdout_cameras": val_cams, "devices": [str(d) for d in devices],
+        "time_offsets": meta["time_offsets"], "coverage": coverage}, indent=2))
     print(f"[train] done in {time.time() - t_start:.0f}s -> {ckpt_path}")
     return ckpt_path

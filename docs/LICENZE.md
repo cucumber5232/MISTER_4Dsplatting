@@ -14,7 +14,8 @@ far verificare.
 Tutto il codice in `src/mister4d/` è stato **scritto da zero per questo
 progetto**: ingest, sincronizzazione, calibrazione, maschere, visual hull,
 modello dinamico (Gaussiane locali nel tempo), training,
-valutazione, export, player WebGL e generatore di dati sintetici. Non è stato
+valutazione, export, player WebGL, interfaccia guidata (MISTER 4D Studio) e
+generatore di dati sintetici. Non è stato
 copiato codice da repository di ricerca.
 
 Dal mondo Gaussian Splatting si usa **solo gsplat** (Apache-2.0): il
@@ -43,8 +44,11 @@ Strumenti esterni, non inclusi nel repository:
   CUDA Toolkit): software proprietario gratuito, regolato dall'EULA NVIDIA.
   L'uso interno è normale prassi; l'EULA va letto se si ridistribuisce.
 
-Il player web (`src/mister4d/viewer/`) non ha dipendenze: nessuna libreria
-JavaScript di terzi.
+Il player web (`src/mister4d/viewer/`) e la pagina di MISTER 4D Studio
+(`src/mister4d/studio/`) non hanno dipendenze: nessuna libreria JavaScript,
+nessun font e nessuna icona di terzi (i caratteri sono quelli del sistema, i
+disegni sono SVG scritti a mano). Il server di Studio usa solo la libreria
+standard di Python.
 
 ## 3. Che cosa è stato escluso, e perché
 

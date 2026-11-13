@@ -336,7 +336,7 @@ function draw(now) {
   gl.uniform2f(uniforms.uViewport, canvas.width, canvas.height);
   gl.uniform1f(uniforms.uSplatScale, state.splatScale);
   gl.viewport(0, 0, canvas.width, canvas.height);
-  if (state.light) gl.clearColor(0.93, 0.94, 0.96, 1); else gl.clearColor(0.045, 0.047, 0.063, 1);
+  if (state.light) gl.clearColor(0.941, 0.929, 0.969, 1); else gl.clearColor(0.082, 0.075, 0.114, 1);  // theme --bg
   gl.clear(gl.COLOR_BUFFER_BIT);
   gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
 

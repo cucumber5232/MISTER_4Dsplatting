@@ -29,6 +29,10 @@ Tutto gira **in locale** sulla propria macchina: non c'è nessun servizio web o
 cloud, e nessun dato lascia il computer. Il player è una pagina HTML letta dal
 browser direttamente da disco.
 
+Chi non usa il terminale lavora con **[MISTER 4D Studio](#mister-4d-studio-senza-terminale)**:
+una pagina guidata che esegue gli stessi passi, nello stesso ordine, e ne
+spiega l'esito in italiano. Su Windows si apre con doppio clic.
+
 ## Licenze: perché si può usare in azienda
 
 Il codice è **scritto da zero** e usa solo componenti con licenze permissive:
@@ -62,6 +66,11 @@ GPU e senza riprese reali):
   sugli indici ufficiali di PyTorch e gsplat, e i test passano su Linux con
   le stesse versioni (Python 3.10, PyTorch 2.4.1, NumPy 1.26, gsplat 1.5.3),
   ma lo script non è stato eseguito su una macchina Windows;
+- MISTER 4D Studio su Windows: è stato collaudato in un browser su Linux
+  dall'inizio alla fine (riprese di esempio, i sei passi, interruzione di un
+  passo, chiusura) e il suo server ha test automatici, ma il file di avvio
+  `MISTER 4D Studio.bat` e la finestra «Sfoglia…» non sono stati provati su
+  una macchina Windows;
 - il backend GPU (gsplat/CUDA) e il training su più GPU su hardware vero. La
   logica multi-GPU è collaudata su CPU con due dispositivi virtuali e il
   rasterizzatore di riferimento su CPU coincide numericamente con
@@ -133,6 +142,64 @@ l'ambiente virtuale è attivo. Controllo dell'ambiente e collaudo delle GPU:
 ```bash
 mister4d doctor
 ```
+
+## MISTER 4D Studio (senza terminale)
+
+Per chi deve usare il programma senza scrivere comandi. Su Windows, dopo
+l'installazione: doppio clic su **`MISTER 4D Studio.bat`** nella cartella del
+progetto. Si apre una pagina nel browser; la finestra nera che resta aperta è
+il programma e si chiude premendo **Esci** nella pagina. Da terminale, su
+qualunque sistema:
+
+```bash
+mister4d app
+```
+
+La pagina accompagna attraverso sei passi, nell'ordine in cui vanno fatti. In
+ogni passo si legge prima che cosa serve, poi si preme un solo pulsante, poi
+si legge che cosa è venuto fuori; le opzioni che servono di rado sono
+richiuse in «Opzioni avanzate».
+
+| | Passo | Che cosa chiede | Che cosa restituisce |
+|---|---|---|---|
+| 01 | Progetto | la cartella dove salvare il lavoro | stato del computer: schede grafiche, FFmpeg, spazio libero |
+| 02 | Video | le tre cartelle delle riprese e come sono sincronizzate | durata, fotogrammi, allineamento e fotogrammi persi per camera |
+| 03 | Calibrazione | le misure del pannello, in centimetri | errore in pixel con un giudizio, copertura delle camere |
+| 04 | Preparazione | la risoluzione di lavoro | anteprima delle maschere, da controllare prima di proseguire |
+| 05 | Ricostruzione | la camera di verifica (facoltativa) | avanzamento con tempo residuo, poi riepilogo della scena |
+| 06 | Risultato | niente | player, video dimostrativo e, con la camera di verifica, qualità misurata |
+
+- Studio **non è una seconda implementazione**: ogni passo lancia i comandi
+  `mister4d` descritti più sotto, compilandone gli argomenti e traducendone
+  l'esito. Quello che si ottiene dalla pagina e dal terminale è identico.
+- Lo stato sta nella cartella del progetto: chiudendo e riaprendo si riparte
+  da dove si era. Cambiare un'opzione riapre i passi che ne dipendono, e solo
+  quelli.
+- Gli errori più comuni sono spiegati in italiano («il pannello è stato
+  riconosciuto in troppo pochi fotogrammi…»); il testo tecnico completo resta in
+  «Dettagli tecnici» e nella cartella `registro/`.
+- «Crea le riprese di esempio», nel passo Video, permette di provare tutto il
+  percorso senza camere.
+- Su un computer senza scheda grafica NVIDIA la ricostruzione viene fatta in
+  versione ridotta (le stesse impostazioni di `mister4d demo --run` senza
+  GPU) e la pagina lo dice.
+- Nulla esce dal computer: la pagina risponde solo all'indirizzo locale
+  `127.0.0.1` e solo a se stessa.
+
+Cartella di un progetto:
+
+```
+progetto.json     scelte fatte e stato dei passi
+lavoro/           fotogrammi estratti e calibrazione
+dati/             immagini corrette, maschere, punti iniziali
+risultato/        player.html, orbita.mp4 e run/ (scena e misure)
+registro/         testo completo di ogni passo
+```
+
+I colori di Studio e del player sono quelli della guida operativa MISTER
+(viola, verde acqua, inchiostro, lavanda) e stanno in un solo file,
+`src/mister4d/viewer/theme.css`: cambiando i quattro valori `--mister-*`
+cambiano entrambe le applicazioni.
 
 ## Prova senza camere (dati sintetici)
 
@@ -300,10 +367,13 @@ scelta in [docs/PIPELINE.md](docs/PIPELINE.md).
 ## Struttura
 
 ```
+MISTER 4D Studio.bat   avvio di Studio con doppio clic (Windows)
 src/mister4d/     pacchetto Python (un modulo per passo della pipeline)
-  viewer/         player WebGL2
+  app.py          MISTER 4D Studio: server locale che guida i passi
+  studio/         pagina di MISTER 4D Studio
+  viewer/         player WebGL2 e colori condivisi (theme.css)
 configs/          opzioni di training
-scripts/          installazione (Windows e Linux)
+scripts/          installazione (Windows e Linux), avvio di Studio (Linux)
 tests/            test automatici
 docs/             licenze, pipeline, sessione di ripresa
 ```

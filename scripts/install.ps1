@@ -78,7 +78,9 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
 & $Venv -m mister4d.cli doctor
 
 Write-Host ""
-Write-Host "Installed. In every new terminal, from this folder, run:"
+Write-Host "Installed."
+Write-Host "Guided interface: double-click 'MISTER 4D Studio.bat' in this folder."
+Write-Host "Command line: in every new terminal, from this folder, run:"
 Write-Host "    .\.venv\Scripts\Activate.ps1        (PowerShell)"
 Write-Host "    .venv\Scripts\activate.bat          (cmd)"
 Write-Host "then use the 'mister4d' command, for example:  mister4d demo --out sessions\demo --run"

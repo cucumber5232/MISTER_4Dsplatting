@@ -21,4 +21,5 @@ python -m pip install -e ".[dev]"
 
 mister4d doctor || true
 echo
-echo "Installed. In every new terminal run:  source .venv/bin/activate"
+echo "Installed. Guided interface:  scripts/studio.sh"
+echo "Command line: in every new terminal run  source .venv/bin/activate"

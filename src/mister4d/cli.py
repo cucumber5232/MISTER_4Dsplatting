@@ -123,6 +123,12 @@ def cmd_view(args):
     serve(args.dir, port=args.port, host=args.host)
 
 
+def cmd_app(args):
+    from .app import serve
+
+    serve(port=args.port, open_browser=not args.no_browser, project=args.project)
+
+
 def cmd_demo(args):
     from .synth import SynthConfig, make_prepared_dataset, make_raw_session
 
@@ -246,6 +252,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--host", default="127.0.0.1")
     p.set_defaults(func=cmd_view)
+
+    p = sub.add_parser("app", help="MISTER 4D Studio: the guided interface in the browser")
+    p.add_argument("--project", help="project folder to open")
+    p.add_argument("--port", type=int, default=8420)
+    p.add_argument("--no-browser", action="store_true", help="do not open the page automatically")
+    p.set_defaults(func=cmd_app)
 
     p = sub.add_parser("demo", help="synthetic capture session; with --run, the whole pipeline on it")
     p.add_argument("--out", required=True)

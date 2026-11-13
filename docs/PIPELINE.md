@@ -287,3 +287,9 @@ pytest
 
 I test lenti allenano un modello minuscolo su CPU (anche nel percorso
 multi-device) e calibrano un rig sintetico confrontandolo con la verità.
+
+`tests/test_app.py` copre il server di MISTER 4D Studio: ogni comando che la
+pagina può chiedere viene fatto leggere al parser della riga di comando (le
+due interfacce non possono divergere senza che un test fallisca), poi coda dei
+passi, interruzione, spiegazione degli errori e controlli di accesso (token,
+indirizzo locale, file fuori dalla cartella del progetto).

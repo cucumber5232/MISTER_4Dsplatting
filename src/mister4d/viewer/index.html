@@ -4,131 +4,40 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MISTER 4D Player</title>
+<link rel="stylesheet" href="theme.css">
 <style>
-  /* ------------------------------------------------------------- tokens */
-  :root {
-    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --r-panel: 16px; --r-control: 10px; --r-pill: 999px;
-    --gap: 12px; --edge: 16px; --control: 40px; --sidebar: 320px;
-    --ease: cubic-bezier(.2, .7, .2, 1);
-  }
-  body[data-theme="dark"] {
-    --glass: rgba(20, 22, 29, .58); --glass-solid: rgba(20, 22, 29, .92);
-    --stroke: rgba(255, 255, 255, .10); --stroke-strong: rgba(255, 255, 255, .20);
-    --text: #f2f4f8; --text-2: #b9c0cd; --text-3: #8d96a7;
-    --fill: rgba(255, 255, 255, .07); --fill-hover: rgba(255, 255, 255, .13); --track: rgba(255, 255, 255, .18);
-    --accent: #a898ff; --on-accent: #15122c; --accent-soft: rgba(168, 152, 255, .18);
-    --shadow: 0 12px 40px rgba(0, 0, 0, .45); --danger: #ff8f8f;
-  }
-  body[data-theme="light"] {
-    --glass: rgba(255, 255, 255, .62); --glass-solid: rgba(255, 255, 255, .94);
-    --stroke: rgba(15, 20, 35, .10); --stroke-strong: rgba(15, 20, 35, .22);
-    --text: #161a22; --text-2: #454d5e; --text-3: #5f687a;
-    --fill: rgba(15, 20, 35, .06); --fill-hover: rgba(15, 20, 35, .11); --track: rgba(15, 20, 35, .18);
-    --accent: #5a45d6; --on-accent: #ffffff; --accent-soft: rgba(90, 69, 214, .14);
-    --shadow: 0 12px 36px rgba(30, 35, 60, .18); --danger: #b3261e;
-  }
-
-  /* --------------------------------------------------------------- base */
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; }
-  body { font: 14px/1.45 var(--font); color: var(--text); background: #0b0c10;
-    -webkit-font-smoothing: antialiased; }
-  h1, h2, h3, p, dl, dd { margin: 0; }
-  button, select, input { font: inherit; color: inherit; }
-  [hidden] { display: none !important; }
-  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden;
-    clip-path: inset(50%); white-space: nowrap; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
+  /* Player layout. Colours, controls and panels come from theme.css. */
+  html, body { overflow: hidden; }
   canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
     touch-action: none; cursor: grab; }
   canvas.dragging { cursor: grabbing; }
-
-  /* Frosted surface shared by every panel. */
-  .panel { position: fixed; z-index: 2; color: var(--text);
-    background: var(--glass); border: 1px solid var(--stroke); border-radius: var(--r-panel);
-    box-shadow: var(--shadow);
-    -webkit-backdrop-filter: blur(22px) saturate(160%); backdrop-filter: blur(22px) saturate(160%);
+  .panel { position: fixed; z-index: 2;
     transition: opacity .2s var(--ease), visibility .2s var(--ease); }
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .panel { background: var(--glass-solid); }
-  }
   body.ui-hidden .panel:not(#reveal) { opacity: 0; visibility: hidden; pointer-events: none; }
+  :root { --sidebar: 320px; }
 
-  /* ----------------------------------------------------------- controls */
-  .icon-btn, .btn, .play { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    height: var(--control); border: 1px solid transparent; border-radius: var(--r-control);
-    background: transparent; cursor: pointer; white-space: nowrap;
-    transition: background-color .15s var(--ease), border-color .15s var(--ease); }
-  .icon-btn { width: var(--control); padding: 0; color: var(--text-2); }
-  .icon-btn:hover { background: var(--fill-hover); color: var(--text); }
-  .icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
-  .btn { width: 100%; padding: 0 14px; background: var(--fill); border-color: var(--stroke); }
-  .btn:hover { background: var(--fill-hover); border-color: var(--stroke-strong); }
-  .play { width: 48px; height: 48px; flex: none; border-radius: var(--r-pill);
-    background: var(--accent); color: var(--on-accent); }
-  .play:hover { filter: brightness(1.08); }
-  svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
-    stroke-linecap: round; stroke-linejoin: round; }
-  svg.solid { fill: currentColor; stroke: none; }
+  .play { display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 48px; height: 48px; border: 0; border-radius: var(--r-pill); cursor: pointer;
+    background: var(--primary); color: var(--on-primary); transition: background-color .15s var(--ease); }
+  .play:hover { background: var(--primary-hover); }
   .play svg { width: 22px; height: 22px; }
   .flip { transform: scaleX(-1); }
-
-  input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: 0;
-    background: transparent; cursor: pointer; --pct: 0%; }
-  input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px;
-    background: linear-gradient(to right, var(--accent) var(--pct), var(--track) var(--pct)); }
-  input[type="range"]::-moz-range-track { height: 6px; border-radius: 3px; background: var(--track); }
-  input[type="range"]::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--accent); }
-  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5px;
-    border: 0; border-radius: 50%; background: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, .35); }
-  input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%;
-    background: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, .35); }
-  input[type="range"]:focus-visible { outline-offset: 4px; border-radius: 6px; }
-
-  select { height: var(--control); padding: 0 30px 0 12px; border: 1px solid var(--stroke);
-    border-radius: var(--r-control); background-color: var(--fill); cursor: pointer;
-    -webkit-appearance: none; appearance: none;
-    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
-      linear-gradient(135deg, currentColor 50%, transparent 50%);
-    background-position: calc(100% - 16px) 17px, calc(100% - 11px) 17px;
-    background-size: 5px 5px; background-repeat: no-repeat; }
-  select:hover { background-color: var(--fill-hover); border-color: var(--stroke-strong); }
-  select option { color: #161a22; background: #fff; }
-
-  /* Radio groups drawn as chips / segmented control (native inputs underneath). */
-  .choices { display: flex; flex-wrap: wrap; gap: 8px; }
-  .choices label { position: relative; flex: 1 1 auto; }
-  .choices input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
-  .choices span { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px;
-    padding: 0 12px; border: 1px solid var(--stroke); border-radius: var(--r-control);
-    background: var(--fill); color: var(--text-2); white-space: nowrap;
-    transition: background-color .15s var(--ease), border-color .15s var(--ease); }
-  .choices label:hover span { background: var(--fill-hover); color: var(--text); }
-  .choices input:checked + span { background: var(--accent-soft); border-color: var(--accent); color: var(--text); font-weight: 600; }
-  .choices input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .choices small { font-size: 11px; font-weight: 500; color: var(--text-3); }
-  .segmented { flex-wrap: nowrap; gap: 0; padding: 3px; border: 1px solid var(--stroke);
-    border-radius: var(--r-control); background: var(--fill); }
-  .segmented span { min-height: 32px; border: 0; background: transparent; border-radius: 7px; }
-  .segmented input:checked + span { border: 0; background: var(--glass-solid); box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
 
   /* ------------------------------------------------------------- top bar */
   #topbar { top: var(--edge); left: var(--edge); display: flex; align-items: center; gap: 4px;
     max-width: calc(100vw - 2 * var(--edge)); padding: 6px 6px 6px 16px; }
-  .brand { display: flex; align-items: baseline; gap: 6px; padding-right: 12px; white-space: nowrap; }
-  .brand h1 { font-size: 15px; font-weight: 700; letter-spacing: .01em; }
-  .brand span { font-size: 13px; color: var(--text-3); }
+  .brand { display: flex; align-items: baseline; gap: 7px; padding-right: 12px; white-space: nowrap; }
+  .brand h1 { font-size: 15px; font-weight: 700; letter-spacing: .02em; }
+  .brand .eyebrow { font-size: 11px; }
   #status { min-width: 0; padding: 0 12px; border-left: 1px solid var(--stroke); color: var(--text-2);
     font-size: 13px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #status.error { color: var(--danger); white-space: normal; }
   #loading { position: absolute; left: 16px; right: 16px; bottom: 0; height: 2px; overflow: hidden; border-radius: 2px; }
-  #loading i { display: block; width: 0; height: 100%; background: var(--accent); transition: width .2s linear; }
+  #loading i { display: block; width: 0; height: 100%; background: var(--accent-fill); transition: width .2s linear; }
 
   #reveal { top: var(--edge); left: var(--edge); padding: 4px; opacity: 0; visibility: hidden; pointer-events: none; }
   body.ui-hidden #reveal { opacity: 1; visibility: visible; pointer-events: auto; }
-  #reveal .btn { width: auto; border: 0; background: transparent; }
+  #reveal .btn { border: 0; background: transparent; font-weight: 500; }
 
   /* ------------------------------------------------------------- sidebar */
   #sidebar { top: var(--edge); right: var(--edge); width: var(--sidebar);
@@ -139,33 +48,20 @@
   .scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
   .group { padding: 16px 18px 18px; border-bottom: 1px solid var(--stroke); }
   .group:last-child { border-bottom: 0; }
-  .group h3 { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650;
-    letter-spacing: .06em; text-transform: uppercase; color: var(--text-2); }
-  .group h3 b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
-    background: var(--accent-soft); color: var(--accent); font-size: 11px; letter-spacing: 0; }
+  .group h3 { display: flex; align-items: center; gap: 8px; }
+  .group h3 b { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--primary); color: var(--on-primary); font-size: 11px; letter-spacing: 0; }
   .hint { margin: 6px 0 12px; font-size: 13px; color: var(--text-3); }
   .field { margin-top: 14px; }
   .field-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px;
     font-size: 13px; color: var(--text-2); }
   .field-head output { color: var(--text); font-variant-numeric: tabular-nums; }
-  .group .btn { margin-top: 10px; }
-
+  .group .btn { width: 100%; margin-top: 10px; }
   details.group { padding: 0; }
-  details.group > summary { display: flex; align-items: center; justify-content: space-between; min-height: 48px;
-    padding: 0 18px; cursor: pointer; list-style: none; font-size: 13px; font-weight: 600; color: var(--text-2); }
-  details.group > summary::-webkit-details-marker { display: none; }
-  details.group > summary:hover { color: var(--text); background: var(--fill); }
+  details.group > summary { padding: 0 18px; }
+  details.group > summary:hover { background: var(--fill); }
   details.group > summary:focus-visible { outline-offset: -2px; }
-  details.group > summary::after { content: ""; width: 8px; height: 8px; margin-right: 4px;
-    border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
-    transform: rotate(45deg) translateY(-2px); transition: transform .2s var(--ease); }
-  details.group[open] > summary::after { transform: rotate(225deg) translateY(-2px); }
-  .rows { padding: 2px 18px 16px; font-size: 13px; }
-  .rows > div { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0; }
-  .rows dt { color: var(--text-3); }
-  .rows dd { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
-  kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px solid var(--stroke-strong);
-    border-radius: 6px; background: var(--fill); font: 12px/1.5 var(--font); text-align: center; color: var(--text-2); }
+  details.group .rows { padding: 2px 18px 16px; }
 
   /* ----------------------------------------------------------- transport */
   #transport { left: var(--edge); right: var(--edge); bottom: var(--edge);
@@ -177,6 +73,7 @@
     font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
   .timeline-meta #clock { color: var(--text); font-weight: 600; }
   .extras { display: flex; align-items: center; gap: 6px; }
+  .extras select { border-color: var(--stroke); background-color: var(--fill); }
 
   /* ----------------------------------------------------------- responsive */
   @media (max-width: 899px) {
@@ -186,10 +83,7 @@
     #transport { flex-wrap: wrap; row-gap: 4px; }
     .timeline { order: 3; flex-basis: 100%; }
     .extras { margin-left: auto; }
-    .brand span { display: none; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { transition: none !important; }
+    .brand .eyebrow { display: none; }
   }
 </style>
 </head>
@@ -198,7 +92,7 @@
 
 <!-- 1. What is loaded -->
 <header id="topbar" class="panel">
-  <div class="brand"><h1>MISTER 4D</h1><span>Player</span></div>
+  <div class="brand"><h1>MISTER 4D</h1><span class="eyebrow">Player</span></div>
   <div id="status" role="status" aria-live="polite">Caricamento…</div>
   <button id="togglePanel" class="icon-btn" type="button" aria-expanded="true" aria-controls="sidebar" title="Impostazioni">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M19 7h1M4 12h3M13 12h7M4 17h11M21 17h-1"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="18" cy="17" r="2.2"/></svg>
@@ -212,7 +106,7 @@
 </header>
 
 <div id="reveal" class="panel">
-  <button id="showUi" class="btn" type="button">Mostra interfaccia <kbd>H</kbd></button>
+  <button id="showUi" class="btn" type="button">Mostra l'interfaccia <kbd>H</kbd></button>
 </div>
 
 <!-- 2. Play it -->
@@ -264,14 +158,14 @@
   </header>
   <div class="scroll">
     <section class="group" aria-labelledby="h-view">
-      <h3 id="h-view"><b>1</b>Punto di vista</h3>
+      <h3 id="h-view" class="eyebrow"><b>1</b>Punto di vista</h3>
       <p class="hint">Guarda da una camera del set o muoviti liberamente.</p>
       <div id="cameras" class="choices" role="radiogroup" aria-labelledby="h-view"></div>
       <button id="resetView" class="btn" type="button">Reimposta vista</button>
     </section>
 
     <section class="group" aria-labelledby="h-look">
-      <h3 id="h-look"><b>2</b>Aspetto</h3>
+      <h3 id="h-look" class="eyebrow"><b>2</b>Aspetto</h3>
       <div class="field">
         <div class="field-head"><span id="l-bg">Sfondo</span></div>
         <div class="choices segmented" role="radiogroup" aria-labelledby="l-bg">
@@ -285,7 +179,7 @@
       </div>
     </section>
 
-    <details class="group">
+    <details class="fold group">
       <summary>Dettagli della scena</summary>
       <dl class="rows">
         <div><dt>Gaussiane nel frame</dt><dd id="d-count">–</dd></div>
@@ -298,7 +192,7 @@
       </dl>
     </details>
 
-    <details class="group">
+    <details class="fold group">
       <summary>Comandi</summary>
       <dl class="rows">
         <div><dt>Ruota</dt><dd>trascina</dd></div>

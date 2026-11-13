@@ -1,0 +1,188 @@
+/* MISTER 4D Studio layout. Colours, controls and panels come from theme.css. */
+
+:root { --rail: 272px; --bar: 64px; }
+html, body { overflow: hidden; }
+
+/* The rig drawing gives the frosted panels something to sit on, and says what the tool is for. */
+.backdrop { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.backdrop svg { position: absolute; right: -150px; bottom: -190px; width: 820px; height: 820px;
+  fill: none; stroke: var(--mister-viola); stroke-width: 2; opacity: .5; }
+.backdrop rect, .backdrop .lens { fill: rgba(100, 83, 148, .10); }
+.backdrop .raised { opacity: .55; }
+.backdrop .subject { fill: rgba(36, 135, 127, .22); stroke: var(--mister-verde); }
+
+.panel { position: fixed; z-index: 1; }
+
+/* -------------------------------------------------------------- top bar */
+.topbar { top: var(--edge); left: var(--edge); right: var(--edge); height: var(--bar);
+  display: flex; align-items: center; gap: 8px; padding: 0 12px 0 22px; }
+.brand { display: flex; flex-direction: column; justify-content: center; margin-right: 12px; white-space: nowrap; }
+.brand .eyebrow { font-size: 10.5px; line-height: 1.3; }
+.brand h1 { font-size: 19px; line-height: 1.2; font-weight: 700; letter-spacing: -.005em; }
+.project { flex: 1; min-width: 0; padding-left: 20px; border-left: 1px solid var(--stroke);
+  color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project b { color: var(--text); font-weight: 600; }
+
+/* ----------------------------------------------------------------- rail */
+.rail { top: calc(var(--edge) + var(--bar) + var(--gap)); left: var(--edge); bottom: var(--edge); width: var(--rail);
+  display: flex; flex-direction: column; padding: 10px; }
+#rail { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.step-link { display: grid; grid-template-columns: 30px 1fr 22px; align-items: center; column-gap: 8px;
+  width: 100%; min-height: 58px; padding: 8px 10px; border: 1px solid transparent; border-radius: var(--r-control);
+  background: transparent; text-align: left; cursor: pointer;
+  transition: background-color .15s var(--ease), border-color .15s var(--ease); }
+.step-link:hover { background: var(--fill); }
+.step-link[aria-current="step"] { background: var(--selected); border-color: var(--selected-stroke); }
+.step-link .num { font-size: 12px; font-weight: 700; letter-spacing: .05em; color: var(--identity);
+  font-variant-numeric: tabular-nums; }
+.step-link .name { display: block; font-weight: 600; line-height: 1.3; }
+.step-link .state { display: block; font-size: 12px; color: var(--text-3); line-height: 1.35; }
+.step-link .mark { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--stroke-strong);
+  display: grid; place-items: center; color: transparent; }
+.step-link .mark svg { width: 12px; height: 12px; stroke-width: 3; }
+.step-link[data-status="done"] .mark { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; }
+.step-link[data-status="done"] .state { color: var(--accent); }
+.step-link[data-status="error"] .mark { border-color: var(--danger); color: var(--danger); }
+.step-link[data-status="error"] .state { color: var(--danger); }
+/* No spinner, on purpose: this page stays open for hours beside a training
+   that needs the whole machine, and a frosted page that animates keeps a
+   renderer busy. What is running is marked, and the clock in the step ticks. */
+.step-link[data-status="running"] .mark { border-color: var(--accent-fill);
+  background: radial-gradient(circle, var(--accent-fill) 0 4px, transparent 4.5px); }
+.step-link[data-status="running"] .state { color: var(--accent); }
+.rail-foot { padding: 12px 4px 4px; border-top: 1px solid var(--stroke); }
+.rail-foot .btn { width: 100%; }
+.rail-foot .hint { margin-top: 8px; font-size: 12px; text-align: center; }
+
+/* ---------------------------------------------------------------- stage */
+.stage { top: calc(var(--edge) + var(--bar) + var(--gap)); left: calc(var(--edge) + var(--rail) + var(--gap));
+  right: var(--edge); bottom: var(--edge); overflow-y: auto; padding: 36px 44px 48px; outline: none; }
+.step { max-width: 720px; }
+.step > .eyebrow { margin-bottom: 8px; }
+.step h2 { font-size: 30px; line-height: 1.15; font-weight: 700; letter-spacing: -.012em; }
+.lead { margin-top: 10px; max-width: 62ch; font-size: 15px; line-height: 1.55; color: var(--text-2); }
+.step h3 { font-size: 15px; font-weight: 650; }
+.hint { font-size: 13px; color: var(--text-3); }
+
+.field { margin: 24px 0 0; padding: 0; border: 0; min-width: 0; }
+.field > label, .field > legend { display: block; margin-bottom: 6px; padding: 0; font-weight: 600; }
+.field > .hint { margin-top: 6px; max-width: 58ch; }
+.field.narrow input, .field.narrow select { width: 100%; max-width: 220px; }
+.field select { width: 100%; max-width: 420px; }
+.field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); column-gap: 24px; align-items: start; }
+.unit { display: flex; align-items: center; gap: 8px; }
+.unit input { width: 120px; }
+.unit span { color: var(--text-3); }
+.path-row { display: flex; gap: 8px; }
+.path-row input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; }
+
+.choices.stack { flex-direction: column; max-width: 520px; }
+.choices.stack span { justify-content: flex-start; flex-wrap: wrap; column-gap: 10px; row-gap: 0;
+  min-height: 52px; padding: 8px 14px; white-space: normal; }
+.choices.stack b { font-weight: 600; color: var(--text); }
+.choices.stack small { font-size: 13px; }
+.choices.segmented { max-width: 360px; }
+
+input[type="text"]:disabled, input[type="number"]:disabled, select:disabled,
+.choices input:disabled + span { opacity: .55; }
+input:disabled, select:disabled { cursor: not-allowed; }
+.lead + .note { margin-top: 12px; }
+.check { display: flex; align-items: flex-start; gap: 10px; margin-top: 24px; max-width: 60ch; cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--mister-viola); }
+
+.clips { margin-top: 24px; display: grid; gap: 10px; }
+.clips li { padding: 16px 18px; border: 1px solid var(--stroke); border-radius: var(--r-control); background: var(--glass-solid); }
+.clip-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; margin-bottom: 10px; }
+.found { margin-top: 8px; font-size: 13px; color: var(--text-3); }
+.found.ok { color: var(--accent); }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 28px; }
+.actions .btn.primary { min-width: 200px; height: 44px; }
+.blocked-note { color: var(--text-3); font-size: 13px; }
+
+/* Outcome of a step: what happened, in words, then the numbers. */
+.result, .aside { margin-top: 28px; padding: 18px 20px; border: 1px solid var(--stroke);
+  border-radius: var(--r-control); background: var(--glass-solid); }
+.result h3, .aside h3 { margin-bottom: 8px; }
+.result p + p, .aside p + p { margin-top: 8px; }
+.aside p { color: var(--text-2); max-width: 60ch; }
+.aside .actions { margin-top: 14px; }
+.verdict { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; }
+.verdict::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-fill); }
+.verdict.fair::before { background: var(--warning); }
+.verdict.poor::before { background: var(--danger); }
+.result .rows { margin-top: 10px; }
+.result .note, .note { margin-top: 10px; font-size: 13px; color: var(--text-2); max-width: 62ch; }
+.note.warn { color: var(--warning); }
+.result table { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 13px; }
+.result th { padding: 8px 10px; text-align: left; font-weight: 600; color: var(--on-primary); background: var(--primary); }
+.result th:first-child { border-radius: 6px 0 0 6px; }
+.result th:last-child { border-radius: 0 6px 6px 0; }
+.result td { padding: 9px 10px; vertical-align: top; border-bottom: 1px solid var(--stroke); }
+.result tr:last-child td { border-bottom: 0; }
+.result td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.result figure { margin-top: 14px; }
+.result figure img, .result video { display: block; width: 100%; border-radius: 8px; background: var(--mister-inchiostro); }
+.result figcaption { margin-top: 8px; font-size: 13px; color: var(--text-3); max-width: 62ch; }
+.deliver { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+
+.problem { margin-top: 20px; padding: 14px 18px; border: 1px solid var(--danger); border-left-width: 4px;
+  border-radius: var(--r-control); background: var(--glass-solid); }
+.problem strong { display: block; margin-bottom: 4px; color: var(--danger); }
+.problem ul { margin: 0; padding-left: 18px; list-style: disc; }
+
+.progress { margin-top: 24px; padding: 18px 20px; border: 1px solid var(--stroke);
+  border-radius: var(--r-control); background: var(--glass-solid); }
+.progress .what { font-weight: 600; }
+.progress .bar { height: 8px; margin: 12px 0 10px; border-radius: 4px; background: var(--track); overflow: hidden; }
+.progress .bar i { display: block; height: 100%; width: 0; border-radius: 4px; background: var(--accent-fill);
+  transition: width .4s var(--ease); }
+/* Unknown length: a segment that moves one notch each time the state is read. */
+.progress .bar.unknown i { width: 12.5%; transition: none; }
+.progress .line { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px;
+  font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+/* Folded away: options most sessions never touch, and the technical log. */
+details.fold { margin-top: 24px; border-top: 1px solid var(--stroke); border-bottom: 1px solid var(--stroke); }
+details.fold > .field-grid { margin-bottom: 20px; }
+details.fold .field-grid .field { margin-top: 8px; }
+details.fold .check { margin-top: 30px; }
+details.tech { margin-top: 28px; }
+details.inner { margin-top: 14px; }
+details.inner > table { margin: 0 0 16px; }
+.outcome { scroll-margin-top: 16px; }
+.outcome:empty { display: none; }
+pre.log { max-height: 320px; margin: 0 0 20px; padding: 14px 16px; overflow: auto; border-radius: 8px;
+  background: var(--mister-inchiostro); color: #dcd8ea; font: 12px/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; }
+
+.toast { left: 50%; bottom: 28px; z-index: 5; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px));
+  padding: 12px 18px; border-color: var(--danger); background: var(--glass-solid); }
+
+.goodbye { position: fixed; inset: 0; z-index: 10; display: grid; place-content: center; gap: 8px; text-align: center;
+  background: var(--bg); }
+.goodbye h2 { font-size: 26px; }
+.goodbye p { color: var(--text-2); }
+
+/* ----------------------------------------------------------- responsive */
+@media (max-width: 899px) {
+  html, body { overflow: auto; }
+  .panel { position: static; }
+  html, body { height: auto; min-height: 100%; }
+  body { padding: 10px; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 10px; }
+  .topbar { height: auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+    gap: 4px 8px; padding: 12px 14px; }
+  .brand { grid-area: 1 / 1; margin-right: 0; }
+  #quit { grid-area: 1 / 2; }
+  .project { grid-area: 2 / 1; padding: 0; border-left: 0; }
+  #openProject { grid-area: 2 / 2; }
+  .rail { width: auto; }
+  #rail { flex-direction: row; overflow-x: auto; scrollbar-width: thin; }
+  #rail li { flex: none; }
+  .rail-foot { border-top: 0; padding-top: 8px; }
+  .step-link { grid-template-columns: 26px auto 20px; min-width: 190px; }
+  .stage { padding: 24px 20px 32px; overflow: visible; }
+  .step h2 { font-size: 24px; }
+  .toast { position: fixed; }
+  .path-row { flex-wrap: wrap; }
+  .path-row input { flex-basis: 100%; }
+}

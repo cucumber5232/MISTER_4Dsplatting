@@ -1,0 +1,159 @@
+/* MISTER 4D: shared visual language of the player and of the Studio.
+
+   The palette comes from the MISTER Smart Innovation working guide: violet for
+   identity and primary actions, teal for what is selected or in progress, ink
+   for text, lavender for quiet surfaces. Change the four brand values below
+   and both applications follow.
+
+   Roles, not decoration:
+   - violet (--primary): the one main action of a view, and identity
+   - teal (--accent*): state - selected, running, completed, the position in time
+   - neutrals are ink / lavender tints, never plain grey
+   Every text / background pair used here meets WCAG AA (4.5:1). */
+
+:root {
+  --mister-viola: #645394;
+  --mister-verde: #24877f;
+  --mister-inchiostro: #242434;
+  --mister-lavanda: #f0edf7;
+
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  --r-panel: 14px; --r-control: 9px; --r-pill: 999px;
+  --gap: 12px; --edge: 16px; --control: 40px;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+}
+
+[data-theme="dark"] {
+  --bg: #15131d;
+  --glass: rgba(30, 27, 44, .62); --glass-solid: rgba(30, 27, 44, .95);
+  --stroke: rgba(240, 237, 247, .12); --stroke-strong: rgba(240, 237, 247, .26);
+  --text: #f6f4fb; --text-2: #c5bfd6; --text-3: #a199ba;
+  --fill: rgba(240, 237, 247, .07); --fill-hover: rgba(240, 237, 247, .13); --track: rgba(240, 237, 247, .20);
+  --primary: var(--mister-viola); --primary-hover: #7463a8; --on-primary: #ffffff;
+  --identity: #b9addf;                        /* violet light enough to be read on ink */
+  --accent: #5cc5ba; --accent-fill: #2d9d93; --accent-soft: rgba(45, 157, 147, .22);
+  --selected: rgba(100, 83, 148, .42); --selected-stroke: #9b90ba;
+  --danger: #ff9d94; --warning: #f2c063;
+  --shadow: 0 14px 44px rgba(8, 6, 16, .55);
+}
+
+[data-theme="light"] {
+  --bg: var(--mister-lavanda);
+  --glass: rgba(255, 255, 255, .68); --glass-solid: rgba(255, 255, 255, .96);
+  --stroke: rgba(36, 36, 52, .10); --stroke-strong: rgba(36, 36, 52, .24);
+  --text: var(--mister-inchiostro); --text-2: #4f4d66; --text-3: #6b6884;
+  --fill: rgba(100, 83, 148, .07); --fill-hover: rgba(100, 83, 148, .13); --track: rgba(36, 36, 52, .16);
+  --primary: var(--mister-viola); --primary-hover: #55467f; --on-primary: #ffffff;
+  --identity: var(--mister-viola);
+  --accent: #1c6e68; --accent-fill: var(--mister-verde); --accent-soft: rgba(36, 135, 127, .13);
+  --selected: rgba(100, 83, 148, .12); --selected-stroke: var(--mister-viola);
+  --danger: #a8322b; --warning: #8a5a00;
+  --shadow: 0 14px 40px rgba(60, 48, 100, .16);
+}
+
+/* ------------------------------------------------------------------ base */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font: 14px/1.5 var(--font); color: var(--text); background: var(--bg);
+  -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p, dl, dd, ol, ul, figure { margin: 0; }
+ol, ul { padding: 0; list-style: none; }
+button, select, input, textarea { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The label that opens every section, as in the MISTER guide: "03 / CALIBRAZIONE". */
+.eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--identity); }
+
+/* Frosted surface shared by every panel. */
+.panel { color: var(--text); background: var(--glass); border: 1px solid var(--stroke);
+  border-radius: var(--r-panel); box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(22px) saturate(150%); backdrop-filter: blur(22px) saturate(150%); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .panel { background: var(--glass-solid); }
+}
+
+/* -------------------------------------------------------------- controls */
+svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; }
+svg.solid { fill: currentColor; stroke: none; }
+
+.btn, .icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: var(--control); border: 1px solid transparent; border-radius: var(--r-control);
+  background: transparent; cursor: pointer; white-space: nowrap; text-decoration: none;
+  transition: background-color .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease); }
+.btn { padding: 0 16px; background: var(--fill); border-color: var(--stroke); font-weight: 600; }
+.btn:hover { background: var(--fill-hover); border-color: var(--stroke-strong); }
+.btn.primary { background: var(--primary); border-color: transparent; color: var(--on-primary); }
+.btn.primary:hover { background: var(--primary-hover); }
+.btn.quiet { background: transparent; border-color: transparent; color: var(--text-2); font-weight: 500; }
+.btn.quiet:hover { background: var(--fill-hover); color: var(--text); }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.icon-btn { width: var(--control); padding: 0; color: var(--text-2); }
+.icon-btn:hover { background: var(--fill-hover); color: var(--text); }
+.icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+
+input[type="text"], input[type="number"], select { height: var(--control); padding: 0 12px;
+  border: 1px solid var(--stroke-strong); border-radius: var(--r-control); background: var(--glass-solid); }
+input[type="text"]:hover, input[type="number"]:hover, select:hover { border-color: var(--text-3); }
+input::placeholder { color: var(--text-3); }
+select { padding-right: 32px; cursor: pointer; -webkit-appearance: none; appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 17px) 17px, calc(100% - 12px) 17px;
+  background-size: 5px 5px; background-repeat: no-repeat; }
+select option { color: #242434; background: #fff; }
+
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: 0;
+  background: transparent; cursor: pointer; --pct: 0%; }
+input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px;
+  background: linear-gradient(to right, var(--accent-fill) var(--pct), var(--track) var(--pct)); }
+input[type="range"]::-moz-range-track { height: 6px; border-radius: 3px; background: var(--track); }
+input[type="range"]::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--accent-fill); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5px;
+  border: 0; border-radius: 50%; background: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, .35); }
+input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%;
+  background: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, .35); }
+input[type="range"]:focus-visible { outline-offset: 4px; border-radius: 6px; }
+
+/* Radio groups drawn as chips or as a segmented control (native inputs underneath). */
+.choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.choices label { position: relative; flex: 1 1 auto; }
+.choices input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.choices span { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px;
+  padding: 0 12px; border: 1px solid var(--stroke); border-radius: var(--r-control);
+  background: var(--fill); color: var(--text-2); white-space: nowrap;
+  transition: background-color .15s var(--ease), border-color .15s var(--ease); }
+.choices label:hover span { background: var(--fill-hover); color: var(--text); }
+.choices input:checked + span { background: var(--selected); border-color: var(--selected-stroke);
+  color: var(--text); font-weight: 600; }
+.choices input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.choices small { font-size: 11px; font-weight: 500; color: var(--text-3); }
+.segmented { flex-wrap: nowrap; gap: 0; padding: 3px; border: 1px solid var(--stroke);
+  border-radius: var(--r-control); background: var(--fill); }
+.segmented span { min-height: 32px; border: 0; background: transparent; border-radius: 6px; }
+.segmented input:checked + span { border: 0; background: var(--glass-solid); box-shadow: 0 1px 3px rgba(20, 14, 40, .22); }
+
+/* Accordions: reference material and advanced options stay folded away. */
+details.fold > summary { display: flex; align-items: center; justify-content: space-between; min-height: 48px;
+  cursor: pointer; list-style: none; font-size: 13px; font-weight: 600; color: var(--text-2); }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary:hover { color: var(--text); }
+details.fold > summary::after { content: ""; width: 8px; height: 8px; margin-right: 4px;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translateY(-2px); transition: transform .2s var(--ease); }
+details.fold[open] > summary::after { transform: rotate(225deg) translateY(-2px); }
+
+.rows { font-size: 13px; }
+.rows > div { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0; }
+.rows dt { color: var(--text-3); }
+.rows dd { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px solid var(--stroke-strong);
+  border-radius: 6px; background: var(--fill); font: 12px/1.5 var(--font); text-align: center; color: var(--text-2); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}

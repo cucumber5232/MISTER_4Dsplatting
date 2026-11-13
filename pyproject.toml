@@ -28,7 +28,7 @@ mister4d = "mister4d.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-mister4d = ["viewer/*"]
+mister4d = ["viewer/*", "studio/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

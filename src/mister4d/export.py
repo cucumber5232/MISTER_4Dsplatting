@@ -121,9 +121,10 @@ def export_html(run_dir: str | Path, out_file: str | Path, frame_step: int = 1,
     """One .html file with viewer and data inside: opens with a double click."""
     scene_json, blobs = _bake(run_dir, frame_step, min_opacity)
     page = (VIEWER_DIR / "index.html").read_text(encoding="utf-8")
-    tag = '<script src="viewer.js"></script>'
-    if tag not in page:
-        raise RuntimeError("viewer/index.html does not reference viewer.js as expected")
+    tag, css = '<script src="viewer.js"></script>', '<link rel="stylesheet" href="theme.css">'
+    if tag not in page or css not in page:
+        raise RuntimeError("viewer/index.html does not reference viewer.js and theme.css as expected")
+    page = page.replace(css, "<style>\n" + (VIEWER_DIR / "theme.css").read_text(encoding="utf-8") + "</style>")
     # "<" never appears literally inside the JSON block, so it cannot close the element early.
     parts = ['<script id="mister4d-scene" type="application/json">'
              + json.dumps(scene_json).replace("<", "\\u003c") + "</script>"]
