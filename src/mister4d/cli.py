@@ -94,7 +94,14 @@ def cmd_train(args):
         overrides.append(f"iterations={args.iterations}")
     if args.devices:
         overrides.append(f"devices={args.devices}")
-    train(args.data, args.out, load_config(args.config, overrides))
+    train(args.data, args.out, load_config(args.config, overrides), resume=not args.fresh)
+
+
+def cmd_lighten(args):
+    from .lighten import lighten
+
+    lighten(args.run, args.out, args.budget, data_dir=args.data, iterations=args.iterations or -1,
+            devices=args.devices or "auto")
 
 
 def cmd_eval(args):
@@ -107,7 +114,8 @@ def cmd_render(args):
     from .render import render_orbit
 
     render_orbit(args.run, args.out, seconds=args.seconds, fps=args.fps, scale=args.scale,
-                 fixed_camera=args.camera)
+                 fixed_camera=args.camera, take=args.take, speed=args.speed, transparent=args.transparent,
+                 width=args.width, height=args.height, path=args.path)
 
 
 def cmd_export(args):
@@ -221,7 +229,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--iterations", type=int)
     p.add_argument("--devices", help='e.g. "cuda:0,cuda:1" (default: all GPUs)')
     p.add_argument("--set", nargs="*", metavar="KEY=VALUE", help="override any config option")
+    p.add_argument("--fresh", action="store_true",
+                   help="train every segment of a long take again, even those already there")
     p.set_defaults(func=cmd_train)
+
+    p = sub.add_parser("lighten", help="a lighter copy of a trained take, for stand-alone headsets")
+    p.add_argument("run", help="run folder of the full-quality take")
+    p.add_argument("--out", required=True, help="run folder of the lighter copy")
+    p.add_argument("--budget", type=int, default=80000, help="Gaussians visible at once, at most")
+    p.add_argument("--data", help="dataset folder (default: the one the take was trained on)")
+    p.add_argument("--iterations", type=int, help="refinement steps per segment (default: 15%% of the training)")
+    p.add_argument("--devices", help='e.g. "cuda:0" (default: all GPUs)')
+    p.set_defaults(func=cmd_lighten)
 
     p = sub.add_parser("eval", help="metrics and comparison images, held-out cameras first")
     p.add_argument("run", help="run folder")
@@ -229,13 +248,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--frame-step", type=int, default=1)
     p.set_defaults(func=cmd_eval)
 
-    p = sub.add_parser("render", help="novel-view video around the subject")
+    p = sub.add_parser("render", help="video of the result, for viewing or for editing")
     p.add_argument("run", help="run folder")
-    p.add_argument("--out", required=True, help="output .mp4")
-    p.add_argument("--seconds", type=float, default=8.0)
-    p.add_argument("--fps", type=float, default=None)
+    p.add_argument("--out", required=True,
+                   help="an .mp4 (H.264), a .mov (ProRes), or a folder for a sequence of PNG images")
+    p.add_argument("--seconds", type=float, default=8.0, help="length, when the take is played back and forth")
+    p.add_argument("--take", action="store_true", help="play the take once, from start to end")
+    p.add_argument("--speed", type=float, default=1.0, help="with --take: 0.5 = half speed")
+    p.add_argument("--fps", type=float, default=None, help="frame rate of the video (default: that of the take)")
     p.add_argument("--scale", type=float, default=1.0, help="resolution relative to the training images")
-    p.add_argument("--camera", help="render from this dataset camera instead of orbiting")
+    p.add_argument("--width", type=int, help="width in pixels (instead of --scale)")
+    p.add_argument("--height", type=int, help="height in pixels (instead of --scale)")
+    p.add_argument("--camera", help="stand where this camera of the rig stood instead of orbiting")
+    p.add_argument("--path", help="JSON file with the key views of a camera move (see the player: Copia la vista)")
+    p.add_argument("--transparent", action="store_true",
+                   help="transparent background: needs a .mov (ProRes 4444) or a folder of PNG images")
     p.set_defaults(func=cmd_render)
 
     p = sub.add_parser("export", help="bake the scene: single-file player, player folder or .ply sequence")
@@ -243,7 +270,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, help="an .html file (html) or a folder (web, ply)")
     p.add_argument("--format", choices=["html", "web", "ply"], default="html",
                    help="html = one file that opens with a double click (default); "
-                        "web = folder for 'mister4d view'; ply = one 3DGS .ply per frame")
+                        "web = folder that loads the take piece by piece, for long takes; "
+                        "ply = one 3DGS .ply per frame")
     p.add_argument("--frame-step", type=int, default=1)
     p.set_defaults(func=cmd_export)
 

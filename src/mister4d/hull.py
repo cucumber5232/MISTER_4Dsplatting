@@ -19,6 +19,7 @@ from scipy import ndimage
 
 from .camera import Rig
 from .dataset import frame_name, read_meta, update_meta, write_points_ply
+from .run import SEGMENT_FRAMES
 
 
 class _Grid:
@@ -106,7 +107,10 @@ def visual_hull(data_dir: str | Path, voxel: float = 0.015, frame_step: int = 1,
 
     # Pass 2, fine, only around the subject, every selected frame.
     fine = _Grid(rig, cams, lo, hi, voxel)
-    per_frame = int(np.clip(total_points // len(frames), 500, max_points_per_frame))
+    # The budget is for one segment of the training (see run.py): a long take gets as many
+    # starting points per frame as a short one.
+    per_segment = max(1, SEGMENT_FRAMES // max(frame_step, 1))
+    per_frame = int(np.clip(total_points // min(len(frames), per_segment), 500, max_points_per_frame))
     rng = np.random.default_rng(seed)
     all_xyz, all_rgb, all_frames = [], [], []
     box_lo, box_hi = np.full(3, np.inf), np.full(3, -np.inf)

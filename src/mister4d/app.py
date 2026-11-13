@@ -41,7 +41,9 @@ DEFAULT_OPTIONS = {
     "square_cm": 12.0, "marker_cm": 9.0, "squares_x": 5, "squares_y": 7,
     "dictionary": "DICT_4X4_50", "floor_frame": None,
     "downscale": 1, "mask_threshold": 24, "keep_shadows": False,
-    "holdout": "", "learn_time_offsets": False, "iterations": None, "devices": "",
+    "holdout": "", "learn_time_offsets": False, "weight": 1, "iterations": None, "devices": "",
+    "extra_subject": False, "subject_view": "", "extra_headset": False, "headset_budget": 80000,
+    "extra_ply": False,
 }
 
 # What a failure usually means, in the operator's words. First match wins.
@@ -62,6 +64,7 @@ HINTS = [
     (r"no clean plate|no empty-set frames", "Manca il set vuoto per una camera."),
     (r"gsplat CUDA backend failed", "La scheda grafica non riesce a eseguire il motore di rendering. "
      "Rilancia l'installazione e controlla i driver NVIDIA."),
+    (r"did not finish", "La ricostruzione era stata interrotta: ripeti il passo 05, riprende da dove era arrivata."),
     (r"out of memory", "La memoria della scheda grafica non basta: riduci la risoluzione di lavoro."),
     (r"No space left|not enough space", "Lo spazio sul disco è finito."),
     (r"ffmpeg.* not found|'ffprobe' not found", "FFmpeg non è installato su questo computer."),
@@ -96,6 +99,13 @@ def _finite(value):
     return value
 
 
+def _megabytes(path: Path) -> float:
+    """Size of a file or of a whole folder."""
+    if path.is_dir():
+        return round(sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1e6, 1)
+    return round(path.stat().st_size / 1e6, 1) if path.exists() else 0.0
+
+
 def _read_json(path: Path):
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -118,19 +128,29 @@ class Job:
         self.process: subprocess.Popen | None = None
         self.cancelled = False
         self._total = 0
+        self._segment, self._segments = 1, 1
 
     def read(self, line: str) -> None:
         self.lines.append(line)
+        found = re.search(r"\[(?:train|lighten)\] segment=(\d+)/(\d+)", line)
+        if found:  # a long take is worked on a segment at a time
+            self._segment, self._segments = int(found.group(1)), int(found.group(2))
+            self.progress = (self._segment - 1) / self._segments
+            self.detail = f"Spezzone {self._segment} di {self._segments}"
         found = re.search(r"\[train\].*iterations=(\d+)", line)
         if found:
             self._total = int(found.group(1))
         found = re.search(r"\[train\] step=(\d+).*seconds=([\d.]+)", line)
         if found and self._total:
             step, seconds = int(found.group(1)), float(found.group(2))
-            self.progress = min(1.0, (step + 1) / self._total)
+            inside = min(1.0, (step + 1) / self._total)
+            self.progress = (self._segment - 1 + inside) / self._segments
             self.detail = f"Passo {step + 1} di {self._total}"
+            if self._segments > 1:
+                self.detail = f"Spezzone {self._segment} di {self._segments} · passo {step + 1} di {self._total}"
             if step > 0:
-                self.eta = seconds / step * (self._total - step)
+                per_step = seconds / step
+                self.eta = per_step * (self._total - step) + per_step * self._total * (self._segments - self._segment)
 
     def view(self) -> dict:
         return {"step": self.step, "label": self.label, "progress": self.progress, "detail": self.detail,
@@ -227,8 +247,10 @@ class Studio:
                    "square_cm": "calibrazione", "marker_cm": "calibrazione", "squares_x": "calibrazione",
                    "squares_y": "calibrazione", "dictionary": "calibrazione", "floor_frame": "calibrazione",
                    "downscale": "preparazione", "mask_threshold": "preparazione", "keep_shadows": "preparazione",
-                   "holdout": "ricostruzione", "learn_time_offsets": "ricostruzione",
-                   "iterations": "ricostruzione", "devices": "ricostruzione"}
+                   "holdout": "ricostruzione", "learn_time_offsets": "ricostruzione", "weight": "ricostruzione",
+                   "iterations": "ricostruzione", "devices": "ricostruzione",
+                   "extra_subject": "risultato", "subject_view": "risultato", "extra_headset": "risultato",
+                   "headset_budget": "risultato", "extra_ply": "risultato"}
 
     def set_options(self, options: dict) -> None:
         with self.lock:
@@ -303,6 +325,11 @@ class Studio:
     # ---------------------------------------------------------- commands ---
 
     @property
+    def long_take(self) -> bool:
+        """The take was trained in segments: its player is a folder that loads them one at a time."""
+        return int((_read_json(self.result / "run" / "train_summary.json") or {}).get("segments", 1)) > 1
+
+    @property
     def reduced(self) -> bool:
         """No GPU on this computer: only a reduced reconstruction is feasible."""
         return bool(self.system.get("checked")) and not self.system.get("gpus")
@@ -354,10 +381,22 @@ class Studio:
             if o.get("learn_time_offsets"):
                 overrides.append("learn_time_offsets=true")
             iterations, devices = o.get("iterations"), o.get("devices")
+            # Weight of the scene: with 2 or 3 a Gaussian lives that many frames and moves with the
+            # subject, instead of being replaced at every frame; the scene has that many times fewer.
+            every = min(max(int(o.get("weight") or 1), 1), 3)
+            points, most = (60000, 80000) if self.reduced else (None, 2_000_000)
+            if every > 1:
+                init += ["--frame-step", str(every)]
+                points = points // every if points else None
+            if points:
+                init += ["--points", str(points)]
+            if every > 1 or self.reduced:
+                overrides.append(f"max_gaussians={most // every}")
             if self.reduced:  # the settings of ``mister4d demo`` without a GPU: coarse, but it ends
-                init += ["--points", "60000"]
                 iterations, devices = iterations or 1500, devices or "cpu"
-                overrides += ["views_per_step=3", "densify_start=400", "max_gaussians=80000", "eval_every=500"]
+                overrides += ["views_per_step=3", "densify_start=400", "eval_every=500"]
+            if (run / "run.json").exists() or (run / "ckpt.pt").exists():
+                train.append("--fresh")  # it was complete: the step is being repeated on purpose
             if iterations:
                 train += ["--iterations", str(int(iterations))]
             if devices:
@@ -367,13 +406,36 @@ class Studio:
             return [("Ricavo la forma di partenza dalle sagome", cli + init),
                     ("Ottimizzo la scena 4D", cli + train)]
         if step == "risultato":
+            trained = _read_json(run / "train_summary.json") or {}
             cmds = []
-            if (_read_json(run / "train_summary.json") or {}).get("holdout_cameras"):
+            if trained.get("holdout_cameras"):
                 cmds.append(("Misuro la qualità dalla camera di verifica", cli + ["eval", str(run)]))
             scale = ["--scale", "2"] if self.reduced else []  # the reduced images are small
-            cmds += [("Creo il video dimostrativo",
-                      cli + ["render", str(run), "--out", str(self.result / "orbita.mp4"), "--seconds", "8"] + scale),
-                     ("Creo il player", cli + ["export", str(run), "--out", str(self.result / "player.html")])]
+            seconds = trained.get("frames", 0) / max(trained.get("fps", 30.0), 1e-6)
+            length = ["--take"] if seconds > 8 else ["--seconds", "8"]  # a long take is shown once, whole
+            cmds.append(("Creo il video dimostrativo",
+                         cli + ["render", str(run), "--out", str(self.result / "orbita.mp4")] + length + scale))
+            if self.long_take:  # a folder that loads the take piece by piece
+                cmds.append(("Creo il player", cli + ["export", str(run), "--format", "web",
+                                                     "--out", str(self.result / "player")]))
+            else:
+                cmds.append(("Creo il player", cli + ["export", str(run), "--out", str(self.result / "player.html")]))
+            if o.get("extra_subject"):
+                view = ["--camera", str(o["subject_view"])] if o.get("subject_view") else []
+                cmds.append(("Creo il video del soggetto su sfondo trasparente",
+                             cli + ["render", str(run), "--out", str(self.result / "soggetto.mov"),
+                                    "--take", "--transparent"] + view + scale))
+            if o.get("extra_headset"):
+                light = self.result / "run_visore"
+                cpu = ["--devices", "cpu", "--iterations", "200"] if self.reduced else []
+                cmds += [("Alleggerisco la scena per il visore",
+                          cli + ["lighten", str(run), "--out", str(light),
+                                 "--budget", str(int(o.get("headset_budget") or 80000))] + cpu),
+                         ("Creo il player per il visore",
+                          cli + ["export", str(light), "--format", "web", "--out", str(self.result / "player_visore")])]
+            if o.get("extra_ply"):
+                cmds.append(("Scrivo la sequenza di file PLY",
+                             cli + ["export", str(run), "--format", "ply", "--out", str(self.result / "ply")]))
             return cmds
         raise ValueError(f"passo sconosciuto: {step}")
 
@@ -418,6 +480,7 @@ class Studio:
                 with open(log_dir / f"{step}.log", "w", encoding="utf-8") as log:
                     for label, argv in self.commands(step):
                         job.label, job.progress, job.detail, job.eta = label, None, "", None
+                        job._segment, job._segments, job._total = 1, 1, 0
                         log.write(f"$ {' '.join(argv[3:])}\n")
                         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
                         job.process = subprocess.Popen(
@@ -494,12 +557,28 @@ class Studio:
                 return _read_json(self.result / "run" / "train_summary.json")
             if step == "risultato":
                 metrics = _read_json(self.result / "run" / "eval" / "metrics.json")
-                out = {"player": (self.result / "player.html").exists(),
-                       "video": (self.result / "orbita.mp4").exists(), "quality": None}
+                player = self.result / ("player" if self.long_take else "player.html")
+                out = {"player": player.exists(), "player_name": player.name + ("/index.html" if player.is_dir() else ""),
+                       "player_mb": _megabytes(player), "player_folder": player.is_dir(),
+                       "video": (self.result / "orbita.mp4").exists(), "quality": None, "extras": []}
+                out["player_url"] = "/project/risultato/" + out["player_name"]
                 if out["video"]:
                     out["video_url"] = f"/project/risultato/orbita.mp4?v={int((self.result / 'orbita.mp4').stat().st_mtime)}"
                 if metrics and metrics.get("holdout_cameras"):
                     out["quality"] = {"cameras": metrics["holdout_cameras"], **metrics["holdout"]}
+                o = self.options
+                subject, headset, ply = self.result / "soggetto.mov", self.result / "player_visore", self.result / "ply"
+                if o.get("extra_subject") and subject.exists():
+                    out["extras"].append({"kind": "subject", "name": subject.name, "mb": _megabytes(subject)})
+                if o.get("extra_headset") and (headset / "scene.json").exists():
+                    scene = _read_json(headset / "scene.json") or {}
+                    out["extras"].append({"kind": "headset", "name": headset.name, "mb": _megabytes(headset),
+                                          "url": "/project/risultato/player_visore/index.html",
+                                          "visible": scene.get("alive_max"), "frames": scene.get("num_frames"),
+                                          "fps": scene.get("fps")})
+                if o.get("extra_ply") and ply.is_dir():
+                    out["extras"].append({"kind": "ply", "name": ply.name, "mb": _megabytes(ply),
+                                          "files": len(list(ply.glob("*.ply")))})
                 return out
         except (OSError, KeyError, TypeError, StopIteration):
             return None

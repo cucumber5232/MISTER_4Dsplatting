@@ -190,24 +190,67 @@ Opzioni: `configs/default.yaml` e `TrainConfig` in `trainer.py`. Le più utili:
 | `static` | false | `true`: 3DGS statico di un solo istante (`static_frame`) |
 | `devices` | `auto` | es. `cuda:0` per usare una sola GPU |
 
-### `eval`, `render`, `export`, `view`
+#### Riprese lunghe: gli spezzoni
+
+Una ripresa più lunga di una volta e mezza `segment_frames` (60 frame, due
+secondi a 30 fps) viene divisa in spezzoni di lunghezza uguale, e ogni
+spezzone è un training a sé in `run/seg_000`, `seg_001`, …; `run/run.json` li
+elenca. Ogni spezzone vede anche `segment_overlap` frame oltre i propri
+estremi, così i frame di confine hanno lo stesso contesto degli altri.
+
+Perché: il modello non ha comunque memoria lunga (una Gaussiana vive pochi
+frame), quindi dividere non toglie nulla; in cambio memoria e tempo di ogni
+training non dipendono dalla durata, il tetto di Gaussiane (`max_gaussians`)
+vale per spezzone e non per tutta la ripresa, e un lavoro interrotto riparte
+dal primo spezzone mancante. Rilanciando lo stesso comando gli spezzoni già
+fatti con gli stessi dati e le stesse opzioni vengono tenuti (`--fresh` per
+rifarli). Gli scarti di tempo tra camere (`learn_time_offsets`) vengono
+imparati sul primo spezzone e riusati negli altri.
+
+`eval`, `render`, `export` e `lighten` leggono il risultato attraverso
+`run.py` e non distinguono una ripresa intera da una a spezzoni.
+
+#### Scene leggere: Gaussiane che durano più frame
+
+Con `init --frame-step K` la nuvola di partenza viene creata ogni K frame
+invece che a ogni frame; le Gaussiane partono con una vita di K frame e la
+velocità stimata dal movimento, e descrivono anche i frame intermedi. A parità
+di Gaussiane visibili per istante, quelle da memorizzare sono K volte meno.
+
+### `eval`, `render`, `export`, `lighten`, `view`
 
 - `eval`: PSNR, SSIM, IoU della sagoma, PSNR nel riquadro del soggetto e
   sfarfallio, per camera; prima le camere escluse dal training. Lo sfarfallio
   è la variazione tra frame consecutivi che non c'è nelle riprese (in livelli
   a 8 bit): vale zero per un risultato che si muove esattamente come il
-  soggetto, qualunque sia il suo errore statico. Scrive `eval/summary.md`,
-  `metrics.json` e immagini verità | render | errore.
-- `render`: video da una camera virtuale che percorre l'arco coperto dal rig
-  (giro completo solo se le camere circondano il soggetto).
-- `export` (default `--format html`): player e dati in un solo file `.html`
-  che si apre con doppio clic, senza server né installazione.
-- `export --format web`: cartella con il player e un file compatto per frame
-  (vedi sotto), da servire con `view`; più leggera da caricare per clip lunghe.
+  soggetto, qualunque sia il suo errore statico. Per una ripresa a spezzoni lo
+  sfarfallio nei frame in cui due spezzoni si incontrano è riportato a parte.
+  Scrive `eval/summary.md`, `metrics.json` e immagini verità | render | errore.
+- `render`: video del risultato. Di default una camera virtuale percorre
+  l'arco coperto dal rig (giro completo solo se le camere circondano il
+  soggetto) mentre la ripresa va avanti e indietro; `--take` la riproduce una
+  volta dall'inizio alla fine; `--camera` sta dove stava una camera del rig;
+  `--path` segue le viste chiave di un file JSON (il player le copia con
+  «Copia la vista»). Uscite: `.mp4` (H.264, per guardare), `.mov` (ProRes 422
+  HQ, oppure 4444 con canale alfa con `--transparent`) o una cartella di
+  immagini PNG; `--width`, `--height` e `--fps` a piacere.
+- `export` (default `--format html`): player e scena in un solo file `.html`
+  che si apre con doppio clic, senza server né installazione. Per riprese di
+  pochi secondi.
+- `export --format web`: cartella con il player e la scena a blocchi, caricati
+  mentre la ripresa scorre. Si apre con doppio clic su `index.html` (o da un
+  server web) e regge riprese di qualunque durata.
 - `export --format ply`: un `.ply` 3DGS standard per frame, per altri
   strumenti. È il formato pesante (non compresso).
-- `view`: piccolo server HTTP locale (solo `127.0.0.1`) per la cartella `web`:
-  serve perché i browser non lasciano leggere file separati da `file://`.
+- `lighten`: copia più leggera di una ripresa già ricostruita, con al massimo
+  `--budget` Gaussiane visibili insieme, per dispositivi che ne disegnano
+  poche (visori autonomi). Misura quanto ogni Gaussiana contribuisce alle
+  immagini delle camere (la somma dei suoi pesi di blending, ricavata con un
+  passaggio all'indietro per istante), toglie in ogni istante la stessa quota
+  delle meno utili e rifinisce le rimaste con un training breve (15%
+  dell'originale) perché coprano il lavoro di quelle tolte.
+- `view`: piccolo server HTTP locale (solo `127.0.0.1`) per la cartella `web`.
+  Facoltativo: la cartella si apre anche da disco.
 
 ## Copertura delle camere
 
@@ -241,28 +284,52 @@ sulla profondità renderizzata, durate iniziali più brevi, rasterizzazione
 antialiasing. Sono prove a bassa risoluzione su CPU: a piena risoluzione su
 GPU alcune potrebbero comportarsi diversamente.
 
-## Formato del player web
+## Formato del player
 
 ```
-export/
-  index.html, viewer.js      player WebGL2 senza dipendenze
-  scene.json                 metadati: fps, numero di Gaussiane per frame, bounding box, camere
-  frames/<indice>.bin        le Gaussiane vive in quel frame
+player.html                          tutto in un file (riprese brevi)
+player/
+  index.html, viewer.js, theme.css   player WebGL2 senza dipendenze
+  scene.js, scene.json               descrizione: fps, frame, camere, blocchi
+  chunks/0000.js, 0001.js, …         un blocco per spezzone della ripresa
 ```
 
-Ogni frame occupa 17 byte per Gaussiana: posizione a 16 bit nel bounding box
-(6), quaternione a 8 bit (4), logaritmo delle scale a 8 bit (3), colore e
-opacità (4). Gli array sono riempiti fino a `tex_width × tex_height` per
-essere caricati direttamente come texture. Ordine di grandezza: 40 000
-Gaussiane vive per frame × 150 frame ≈ 100 MB.
+La scena non è scritta frame per frame. Ogni Gaussiana è salvata **una volta
+sola**, con l'istante su cui è centrata, la sua durata e la sua velocità, e il
+player la valuta nell'istante mostrato, come fa il training: la sposta di
+`velocità × (t − istante)` e ne attenua l'opacità con la campana temporale.
 
-Il formato `html` contiene gli stessi byte, codificati in base64 dentro la
-pagina (circa un terzo in più di spazio), insieme a `scene.json` e al codice
-del player.
+In un blocco le Gaussiane sono ordinate per istante (prima le poche a vita
+lunga, che il player considera sempre), 23 byte ciascuna, in cinque parti che
+vengono caricate sulla GPU così come sono:
 
-Limiti attuali del player: colore indipendente dalla vista (solo termine DC),
-tutti i frame tenuti in memoria, ordinamento in profondità sul thread
-principale.
+| Parte | Tipo | Contenuto |
+|---|---|---|
+| A | 4 × uint16 | posizione x y z nel riquadro del blocco, istante |
+| B | 4 × uint8 | velocità x y z (con segno; il codice è al quadrato, così i movimenti lenti sono memorizzati finemente), durata |
+| C | 4 × uint8 | rotazione (quaternione w x y z) |
+| D | 4 × uint8 | logaritmo delle scale x y z, opacità di picco |
+| E | 3 × uint8 | colore |
+
+Il blocco è poi compresso con gzip. `scene.json` contiene gli intervalli per
+riportare gli interi a metri, frame e così via, e per ogni blocco il numero
+massimo di Gaussiane visibili insieme (`alive_max`): è il numero che dice se
+un dispositivo riesce a disegnare la scena. I blocchi sono piccoli script
+(`mister4dChunk(indice, "base64")`) e non file binari, perché una pagina aperta
+da disco può caricare script ma non scaricare dati: così la cartella funziona
+con un doppio clic oltre che da un server.
+
+Misure sulla scena della demo (29 frame, 240×135): con il formato precedente,
+che riscriveva le Gaussiane vive a ogni frame, il player pesava 3,4 MB; con
+questo 1,0 MB; con la scena leggera (`init --frame-step 3`) 0,4 MB.
+
+Il player tiene in memoria il blocco mostrato e il successivo, e mostra la
+scena negli istanti su cui è stata allenata (frame interi).
+
+Limiti attuali del player: colore indipendente dalla vista (solo termine DC);
+ordinamento in profondità e decodifica dei blocchi sul thread principale (con
+blocchi molto grandi è possibile uno scatto al cambio di blocco); nessuna
+modalità per visori (WebXR).
 
 ## Backend di rasterizzazione
 

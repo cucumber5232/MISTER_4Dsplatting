@@ -58,9 +58,12 @@ Il lavoro è diviso in sei passi, che il programma propone uno dopo l'altro.
 5. Ricostruzione. È il passo lungo. Il programma parte da una forma grezza e
    la corregge moltissime volte, confrontando ogni volta quello che ha
    costruito con le immagini vere, finché le due cose si assomigliano. Può
-   durare da qualche minuto a qualche ora.
-6. Risultato. Il programma prepara un file da aprire nel browser, in cui si
-   guarda la scena e ci si gira intorno, e un breve video dimostrativo.
+   durare da qualche minuto a molte ore. Una ripresa lunga viene lavorata a
+   pezzi di due secondi, uno dopo l'altro: se il lavoro viene interrotto, alla
+   ripartenza i pezzi già fatti restano.
+6. Risultato. Il programma prepara il player, da aprire nel browser, in cui si
+   guarda la scena e ci si gira intorno, e un video dimostrativo. Su richiesta
+   prepara anche il materiale per chi deve montare un video o usare un visore.
 
 Dopo ogni passo il programma dice com'è andata e, se qualcosa non va, che cosa
 conviene rifare. Accanto a ogni richiesta c'è una piccola "i": premendola
@@ -69,9 +72,26 @@ passo" racconta il resto.
 
 ## Che cosa si ottiene
 
-Un file chiamato player.html. Si apre con doppio clic, anche su un altro
-computer e senza connessione. Si può far partire e fermare la scena e guardarla
-da dove si vuole.
+Il player. Per una ripresa breve è un solo file, player.html; per una ripresa
+lunga è una cartella, da consegnare intera, che contiene index.html. In
+entrambi i casi si apre con doppio clic, anche su un altro computer e senza
+connessione. Si può far partire e fermare la scena e guardarla da dove si
+vuole.
+
+Su richiesta si ottengono anche:
+
+- un filmato del solo soggetto con lo sfondo trasparente, da sovrapporre ad
+  altre immagini in un programma di montaggio;
+- una versione più leggera della scena, pensata per i visori che funzionano da
+  soli, senza computer;
+- la scena in un formato standard, per altri programmi di grafica 3D.
+
+## Quanto pesa la scena
+
+Si può scegliere tra tre pesi: massimo dettaglio, bilanciata, leggera. Nella
+scena leggera ogni macchia di colore dura più a lungo e segue il movimento del
+soggetto, invece di essere sostituita a ogni istante: ne servono circa un
+terzo. È la scelta adatta alle riprese lunghe e ai visori.
 
 ## Da che cosa dipende la qualità
 
@@ -86,7 +106,7 @@ da dove si vuole.
 
 - Non funziona in diretta: prima si registra, poi si elabora.
 - Non inventa quello che nessuna camera ha visto.
-- È pensato per riprese brevi, di pochi secondi.
+- Non è veloce: il tempo di calcolo cresce con la durata della ripresa.
 - Il risultato è fatto per essere guardato, non per prendere misure.
 
 ## Dove restano i dati

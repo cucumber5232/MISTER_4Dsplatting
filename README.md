@@ -10,7 +10,7 @@ Questo repository copre la parte software dalla ricezione dei file video al
 player.
 
 ```
-video per camera → ingest → calibrate → prepare → masks → init → train → eval / render / export → view
+video per camera → ingest → calibrate → prepare → masks → init → train → eval / render / export / lighten → view
 ```
 
 | Passo | Che cosa fa |
@@ -20,10 +20,11 @@ video per camera → ingest → calibrate → prepare → masks → init → tra
 | `prepare` | undistort e ridimensionamento con intrinseci coerenti; fondale del set vuoto |
 | `masks` | maschere soggetto/sfondo per confronto con il set vuoto |
 | `init` | visual hull di ogni frame: geometria iniziale e ingombro del soggetto |
-| `train` | ottimizzazione della scena dinamica su tutte le GPU disponibili; su richiesta impara gli scarti di sync tra camere |
+| `train` | ottimizzazione della scena dinamica su tutte le GPU disponibili; le riprese lunghe a spezzoni, con ripresa dopo un'interruzione; su richiesta impara gli scarti di sync tra camere |
 | `eval` | metriche (qualità, sagoma, sfarfallio) e immagini di confronto su una camera esclusa dal training |
-| `render` | video da una camera virtuale che gira attorno al soggetto |
-| `export` | player 4D in **un solo file HTML** che si apre con doppio clic; in alternativa cartella per `view` o sequenza di `.ply` |
+| `render` | video del risultato: anteprima, oppure materiale per il montaggio (ripresa intera, qualunque risoluzione, sfondo trasparente in ProRes 4444 o PNG, movimento di camera a piacere) |
+| `export` | player 4D in **un solo file HTML** che si apre con doppio clic; per le riprese lunghe una cartella che carica la scena a pezzi; oppure sequenza di `.ply` |
+| `lighten` | copia più leggera di una ripresa già ricostruita, per i visori autonomi |
 
 Tutto gira **in locale** sulla propria macchina: non c'è nessun servizio web o
 cloud, e nessun dato lascia il computer. Il player è una pagina HTML letta dal
@@ -71,6 +72,11 @@ GPU e senza riprese reali):
   passo, chiusura) e il suo server ha test automatici, ma il file di avvio
   `MISTER 4D Studio.bat` e la finestra «Sfoglia…» non sono stati provati su
   una macchina Windows;
+- le riprese lunghe, le scene leggere e la versione per visore: i
+  meccanismi hanno test automatici e misure su dati sintetici minuscoli (vedi
+  [Riprese lunghe, scene leggere, montaggio, visori](#riprese-lunghe-scene-leggere-montaggio-visori)),
+  ma non sono mai stati usati su una ripresa vera, e nessuna scena è stata
+  aperta su un visore;
 - il backend GPU (gsplat/CUDA) e il training su più GPU su hardware vero. La
   logica multi-GPU è collaudata su CPU con due dispositivi virtuali e il
   rasterizzatore di riferimento su CPU coincide numericamente con
@@ -169,9 +175,17 @@ richiuse in «Opzioni avanzate».
 | 02 | Video | le tre cartelle delle riprese e come sono sincronizzate | durata, fotogrammi, allineamento e fotogrammi persi per camera |
 | 03 | Calibrazione | le misure del pannello, in centimetri | errore in pixel con un giudizio, copertura delle camere |
 | 04 | Preparazione | la risoluzione di lavoro | anteprima delle maschere, da controllare prima di proseguire |
-| 05 | Ricostruzione | la camera di verifica (facoltativa) | avanzamento con tempo residuo, poi riepilogo della scena |
-| 06 | Risultato | niente | player, video dimostrativo e, con la camera di verifica, qualità misurata |
+| 05 | Ricostruzione | la camera di verifica (facoltativa), il peso della scena | avanzamento con tempo residuo, poi riepilogo della scena |
+| 06 | Risultato | quali materiali in più creare (facoltativo) | player, video dimostrativo, materiali richiesti e, con la camera di verifica, qualità misurata |
 
+- Le riprese lunghe vengono ricostruite a spezzoni, senza nulla da
+  impostare: l'avanzamento li conta, e se il lavoro viene interrotto
+  ripetendo il passo riparte dal primo spezzone mancante.
+- Nel passo Ricostruzione si sceglie il **peso della scena** (massimo
+  dettaglio, bilanciata, leggera); nel passo Risultato, sotto «Materiale per
+  il montaggio e per il visore», si possono chiedere il video del soggetto su
+  sfondo trasparente, la versione leggera per visore autonomo e la sequenza
+  di file PLY.
 - Accanto a ogni richiesta una piccola «i» apre la sua spiegazione: che
   cos'è, come prepararla, che cosa succede se è sbagliata. La voce «Come
   funziona questo passo» racconta il resto; nel passo Calibrazione contiene
@@ -314,11 +328,83 @@ Note:
 - `--holdout` / `--exclude`: la camera indicata resta fuori da inizializzazione
   e training e serve a misurare la qualità da un punto di vista indipendente.
   Per il risultato finale si rilancia senza, usando tutte le camere.
-- `export --format web` scrive invece una cartella (un file per frame) da
-  aprire con `mister4d view <cartella>`: più leggera da caricare per clip
-  lunghe. `--format ply` scrive un `.ply` 3DGS per frame.
+- `export --format web` scrive invece una cartella che carica la scena a
+  pezzi, per le riprese lunghe: si apre con doppio clic su `index.html`.
+  `--format ply` scrive un `.ply` 3DGS per frame.
 - Ogni comando ha `--help`; tutte le opzioni di training sono in
   `configs/default.yaml` e si cambiano con `--set chiave=valore`.
+
+## Riprese lunghe, scene leggere, montaggio, visori
+
+**Riprese lunghe.** Non c'è nulla da impostare: una ripresa più lunga di circa
+tre secondi viene ricostruita a spezzoni di due secondi, ognuno un training a
+sé (`runs/take01/seg_000`, `seg_001`, …). Tempo e memoria di ogni training non
+dipendono dalla durata; il totale cresce in proporzione. Se il lavoro si
+interrompe, lo stesso comando lo riprende dal primo spezzone mancante
+(`--fresh` per rifare tutto). Il player di una ripresa lunga è una cartella:
+
+```bash
+mister4d export runs/take01 --format web --out exports/take01
+```
+
+**Scene leggere.** Con una nuvola di partenza ogni tre frame invece che a
+ogni frame le Gaussiane vivono tre frame e si muovono con il soggetto; ne
+servono circa un terzo:
+
+```bash
+mister4d init data/take01 --frame-step 3
+```
+
+```bash
+mister4d train data/take01 --out runs/take01_leggera --set max_gaussians=660000
+```
+
+**Versione per visore autonomo.** Da una ripresa già ricostruita, una copia
+con al massimo tante Gaussiane visibili insieme quante ne regge il visore:
+
+```bash
+mister4d lighten runs/take01 --out runs/take01_visore --budget 80000
+```
+
+```bash
+mister4d export runs/take01_visore --format web --out exports/take01_visore
+```
+
+**Materiale per il montaggio.** La ripresa intera con il solo soggetto su
+sfondo trasparente, in ProRes 4444 oppure come immagini PNG, alla risoluzione
+che serve:
+
+```bash
+mister4d render runs/take01 --out exports/soggetto.mov --take --transparent --height 2160
+```
+
+```bash
+mister4d render runs/take01 --out exports/soggetto_png --take --transparent
+```
+
+Per un movimento di camera proprio: nel player si sceglie un punto di vista,
+«Copia la vista», e si incollano le viste in un file JSON (una lista, ognuna
+con il suo `time` in secondi); poi `mister4d render … --path viste.json`.
+
+Misure sulla ripresa sintetica della demo (29 frame, 240×135, CPU, 1500 passi
+per training, `cam02` esclusa e usata come verifica). «Verifica» è la camera
+mai vista, «training» la media delle tre usate; PSNR nel riquadro del
+soggetto.
+
+| Variante | Gaussiane | Player | Verifica: PSNR / IoU / sfarfallio | Training: PSNR / sfarfallio |
+|---|---|---|---|---|
+| di riferimento, un pezzo | 65 368 | 1,0 MB | 20,9 dB / 0,86 / 3,6 | 34,5 dB / 1,9 |
+| di riferimento, in 3 spezzoni | 81 603 | 1,2 MB | 20,7 dB / 0,86 / 3,8 (4,3 dove due spezzoni si incontrano) | 35,9 dB / 1,6 (1,6 dove si incontrano) |
+| bilanciata (`--frame-step 2`) | 34 485 | 0,6 MB | 21,3 dB / 0,87 / 3,2 | 33,3 dB / 2,4 |
+| leggera (`--frame-step 3`) | 24 228 | 0,4 MB | 21,2 dB / 0,87 / 3,1 | 32,9 dB / 2,5 |
+| per visore (`lighten`, metà delle Gaussiane visibili insieme) | 6 108 | 0,2 MB | 20,7 dB / 0,86 / 3,4 | 32,6 dB / 2,5 |
+
+Nel formato precedente, che riscriveva le Gaussiane a ogni frame, il player
+della scena di riferimento pesava 3,4 MB. Sono numeri di una prova minuscola,
+con un soggetto che si muove lentamente: dicono che i meccanismi funzionano e
+in che direzione vanno i compromessi, non quanto pesa o come rende una
+ripresa vera. In particolare la scena leggera può perdere nitidezza con
+movimenti rapidi, e nessuna di queste scene è stata provata su un visore.
 
 ## Training sulle GPU
 
@@ -367,15 +453,15 @@ scelta in [docs/PIPELINE.md](docs/PIPELINE.md).
   all'altro: da punti di vista lontani dalle camere possono restare piccoli
   sfarfallii, e non c'è una traiettoria per punto utilizzabile per analisi del
   gesto.
-- **Durata.** Il numero di Gaussiane ha un tetto unico per tutta la ripresa
-  (`max_gaussians`, 2 milioni) e i punti iniziali si dividono tra i frame: più
-  la clip è lunga, meno dettaglio resta per ogni istante. I valori di default
-  sono pensati per 1–3 secondi; fino a una decina di secondi vanno alzati a
-  mano (`init --points`, `--set max_gaussians=…`), oltre serve lavorare a
-  spezzoni, cosa non ancora prevista. Anche i passi di training crescono con
-  la durata (250 per frame).
-- **Player.** Colore indipendente dalla vista, tutti i frame in memoria: va
-  bene per clip di qualche secondo, non per riprese lunghe.
+- **Durata.** Le riprese lunghe vengono ricostruite a spezzoni di due secondi:
+  tempo di calcolo, spazio su disco e peso del player crescono in proporzione
+  alla durata (250 passi di training per frame). Il meccanismo è collaudato
+  solo su dati sintetici minuscoli: tempi e peso su riprese vere, e la resa
+  nei punti in cui due spezzoni si incontrano, vanno misurati sulla
+  workstation.
+- **Player.** Colore indipendente dalla vista. Non ha ancora una modalità per
+  visori (WebXR): la versione leggera prodotta da `lighten` è pensata per un
+  visore autonomo ma **non è mai stata provata su un visore**.
 - **Nessuna misura.** Fotorealismo non significa accuratezza metrica: il
   risultato non è una superficie su cui prendere quote.
 
@@ -384,6 +470,8 @@ scelta in [docs/PIPELINE.md](docs/PIPELINE.md).
 ```
 MISTER 4D Studio.bat   avvio di Studio con doppio clic (Windows)
 src/mister4d/     pacchetto Python (un modulo per passo della pipeline)
+  run.py          lettura di una ripresa ricostruita, intera o a spezzoni
+  lighten.py      copia leggera per visori autonomi
   app.py          MISTER 4D Studio: server locale che guida i passi
   studio/         pagina di MISTER 4D Studio
   viewer/         player WebGL2 e colori condivisi (theme.css)
@@ -411,12 +499,16 @@ mancano, in ordine di peso:
    tra un punto di vista e l'altro, e nessun software lo compensa. Un
    obiettivo intermedio realistico sono 16–24 camere sincronizzate via
    hardware, con luce uniforme.
-2. **Durata.** Oggi il programma è tarato su pochi secondi (vedi
-   [Limiti noti](#limiti-noti)): servono la ricostruzione a spezzoni e un
-   player che carichi la scena a pezzi, compressa.
+2. **Durata.** La ricostruzione a spezzoni e il player che carica la scena a
+   pezzi ci sono, ma sono collaudati solo su dati sintetici minuscoli: vanno
+   misurati tempi, peso e resa su riprese vere di decine di secondi.
 3. **Resa.** Colore che cambia con il punto di vista, capelli e mani, bordi
    puliti (maschere migliori), stabilità da un fotogramma all'altro.
 4. **Riproduzione.** Un visore o un motore grafico al posto della pagina web.
+   La versione leggera della scena e il suo formato (documentato in
+   [docs/PIPELINE.md](docs/PIPELINE.md)) sono pronti; manca chi la disegna
+   sul visore: una modalità WebXR di questo player oppure un lettore del
+   formato in Unity. Va fatto con il visore in mano.
 
 Prima di tutto questo viene il collaudo su GPU e su riprese reali, che non è
 ancora stato fatto.

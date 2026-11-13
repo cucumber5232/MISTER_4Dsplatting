@@ -77,7 +77,7 @@ svg.solid { fill: currentColor; stroke: none; }
   height: var(--control); border: 1px solid transparent; border-radius: var(--r-control);
   background: transparent; cursor: pointer; white-space: nowrap; text-decoration: none;
   transition: background-color .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease); }
-.btn { padding: 0 16px; background: var(--fill); border-color: var(--stroke); font-weight: 600; }
+.btn { padding: 0 16px; background: var(--fill); border-color: var(--stroke); font-weight: 600; color: var(--text); }
 .btn:hover { background: var(--fill-hover); border-color: var(--stroke-strong); }
 .btn.primary { background: var(--primary); border-color: transparent; color: var(--on-primary); }
 .btn.primary:hover { background: var(--primary-hover); }

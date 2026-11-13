@@ -82,6 +82,15 @@ html, body { overflow: hidden; }
 .choices.stack b { font-weight: 600; color: var(--text); }
 .choices.stack small { font-size: 13px; }
 .choices.segmented { max-width: 360px; }
+.choices.segmented.wide { max-width: 520px; }
+/* Optional outputs: a tick each, with what belongs to it indented under it. */
+.extras { margin-bottom: 20px; }
+.extras .check-row:first-child .check { margin-top: 8px; }
+.extras .check-row:first-child .info { margin-top: 6px; }
+.extras .field.sub { margin: 10px 0 0 28px; }
+.extras .field.sub > label { font-weight: 500; color: var(--text-2); }
+.extras .field.sub .label-row label { font-weight: 500; color: var(--text-2); }
+.extras .field.sub select, .extras .field.sub input { max-width: 300px; }
 
 input[type="text"]:disabled, input[type="number"]:disabled, select:disabled,
 .choices input:disabled + span { opacity: .55; }
@@ -148,6 +157,7 @@ details.fold > .field-grid { margin-bottom: 20px; }
 details.fold .field-grid .field { margin-top: 8px; }
 details.fold .check { margin-top: 30px; }
 details.tech { margin-top: 28px; }
+details.explain + details.advanced { margin-top: 0; border-top: 0; }
 /* How a step works: reference text, folded. */
 details.explain { margin-top: 18px; }
 dl.explain { display: grid; gap: 14px; max-width: 66ch; margin: 2px 0 20px; }

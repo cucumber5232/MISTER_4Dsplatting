@@ -17,9 +17,13 @@ import torch
 
 from .dataset import MultiViewDataset
 from .losses import psnr, ssim
-from .model import load_checkpoint, render_scene
+from .model import render_scene
 from .rasterizer import resolve_backend
+from .run import Run
 from .trainer import pick_device
+
+
+METRICS = ("psnr", "psnr_subject", "ssim", "iou", "flicker", "flicker_at_cuts")
 
 
 def _crop_box(region: torch.Tensor, margin: int = 8) -> tuple[int, int, int, int] | None:
@@ -36,10 +40,10 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
                  num_images: int = 4, device: str = "auto", log=print) -> dict:
     run = Path(run_dir)
     dev = pick_device(device)
-    scene, ckpt = load_checkpoint(run / "ckpt.pt", dev)
-    meta = ckpt["meta"]
-    backend = resolve_backend(ckpt["config"].get("backend", "auto"), dev)
-    antialiased = bool(ckpt["config"].get("antialiased", False))
+    take = Run(run, dev)
+    meta = take.meta
+    backend = resolve_backend(take.config.get("backend", "auto"), dev)
+    antialiased = bool(take.config.get("antialiased", False))
     ds = MultiViewDataset(data_dir or meta["data_dir"])
     out = run / "eval"
     out.mkdir(exist_ok=True)
@@ -52,12 +56,12 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
     for group, cams in (("holdout", meta["holdout_cameras"]), ("train", meta["train_cameras"])):
         for cam in cams:
             viewmats, Ks = ds.camera_tensors([cam], dev)
-            shift = (meta.get("time_offsets") or {}).get(cam, 0.0)  # learned sub-frame offset
             rows = []
             previous = None  # (frame index, render, ground truth) of the frame before
             for k, fi in enumerate(frames):
                 gt, mask = ds.batch(fi, [cam], dev)
-                rgb, alpha, *_ = render_scene(scene, fi + shift, viewmats, Ks, ds.width, ds.height,
+                shift = take.time_offsets(fi).get(cam, 0.0)  # learned sub-frame offset
+                rgb, alpha, *_ = render_scene(take.scene_at(fi), fi + shift, viewmats, Ks, ds.width, ds.height,
                                               backend=backend, antialiased=antialiased)
                 if mask is not None:  # compare subject only, on white
                     gt = gt * mask + (1.0 - mask)
@@ -82,6 +86,8 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
                         # static errors. In 8-bit levels, inside the box of the subject.
                         extra = (pred - previous[1]) - (gt - previous[2])
                         row["flicker"] = float(extra[:, y0:y1, x0:x1].abs().mean() * 255.0)
+                        if take.is_cut(fi):  # where two segments of a long take meet
+                            row["flicker_at_cuts"] = row["flicker"]
                 previous = (fi, pred, gt)
                 rows.append(row)
                 if k in shown:
@@ -89,7 +95,8 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
                     strip = torch.cat([gt[0], pred[0], err[0]], dim=1).cpu().numpy()
                     cv2.imwrite(str(out / f"{group}_{cam}_{ds.frame_ids[fi]:06d}.jpg"),
                                 cv2.cvtColor((strip * 255 + 0.5).astype(np.uint8), cv2.COLOR_RGB2BGR))
-            keys = [k for k in ("psnr", "psnr_subject", "ssim", "iou", "flicker") if any(k in r for r in rows)]
+            keys = [k for k in ("psnr", "psnr_subject", "ssim", "iou", "flicker", "flicker_at_cuts")
+                    if any(k in r for r in rows)]
             per_camera[cam] = {"group": group, "frames": rows,
                                **{k: float(np.nanmean([r[k] for r in rows if k in r])) for k in keys}}
             log(f"[eval] {group:7s} {cam}: " + "  ".join(f"{k}={per_camera[cam][k]:.3f}" for k in keys))
@@ -100,9 +107,9 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
 
     summary = {
         "train_cameras": meta["train_cameras"], "holdout_cameras": meta["holdout_cameras"],
-        "frames_evaluated": len(frames), "gaussians": scene.num_gaussians,
-        "holdout": {k: mean_of("holdout", k) for k in ("psnr", "psnr_subject", "ssim", "iou", "flicker")},
-        "train": {k: mean_of("train", k) for k in ("psnr", "psnr_subject", "ssim", "iou", "flicker")},
+        "frames_evaluated": len(frames), "gaussians": take.num_gaussians, "segments": len(take.segments),
+        "holdout": {k: mean_of("holdout", k) for k in METRICS},
+        "train": {k: mean_of("train", k) for k in METRICS},
         "per_camera": per_camera,
     }
     (out / "metrics.json").write_text(json.dumps(summary, indent=2))
@@ -114,7 +121,8 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
         "# Evaluation", "",
         f"- training cameras ({len(meta['train_cameras'])}): {', '.join(meta['train_cameras'])}",
         f"- held-out cameras ({len(meta['holdout_cameras'])}): {', '.join(meta['holdout_cameras']) or 'none'}",
-        f"- frames evaluated: {len(frames)}; Gaussians: {scene.num_gaussians}",
+        f"- frames evaluated: {len(frames)}; Gaussians: {take.num_gaussians}"
+        + (f"; segments: {len(take.segments)}" if len(take.segments) > 1 else ""),
     ]
     if meta.get("coverage"):
         from .camera import describe_coverage
@@ -138,6 +146,10 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
               "inflated by the uniform background). Flicker = change between consecutive frames that "
               "is not in the footage, in 8-bit levels inside the box of the subject (lower is better; "
               "needs every frame, i.e. --frame-step 1). Images: ground truth | render | error x4."]
+    for group in ("holdout", "train"):
+        if len(take.segments) > 1 and summary[group]["flicker_at_cuts"] is not None:
+            lines += ["", f"Flicker where two segments meet ({group}): {fmt(summary[group]['flicker_at_cuts'])} "
+                      f"(elsewhere {fmt(summary[group]['flicker'])} on average)."]
     (out / "summary.md").write_text("\n".join(lines) + "\n")
     log(f"[eval] report in {out}")
     return summary

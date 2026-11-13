@@ -6,11 +6,17 @@ instant seen by several cameras) and returns its loss; a single backward pass
 sends the gradients of all devices back to the owner. With two GPUs a step
 therefore sees twice as many images in about the same wall-clock time.
 Frames are decoded by background threads so that the GPUs never wait on disk.
+
+Long takes are trained in segments of a couple of seconds (see ``run.py``):
+each segment is a training of its own, so memory and time per training do not
+grow with the length of the take, and an interrupted job continues from the
+first segment that is missing.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import queue
 import random
@@ -25,11 +31,12 @@ import torch
 import yaml
 
 from .camera import describe_coverage, silhouette_coverage
-from .dataset import MultiViewDataset, read_points_ply
+from .dataset import MultiViewDataset, read_meta, read_points_ply
 from .losses import psnr, scale_regularizer, ssim
 from .model import (DynamicScene, estimate_velocities, init_gaussian_params, render_scene,
                     save_checkpoint)
 from .rasterizer import resolve_backend
+from .run import MANIFEST, SEGMENT_FRAMES, plan_segments, segment_dir, write_manifest
 
 
 @dataclass
@@ -41,7 +48,9 @@ class TrainConfig:
     loader_threads: int = 8  # threads decoding frames ahead of the GPUs
 
     # --- schedule -----------------------------------------------------------
-    iterations: int = -1  # -1 = 250 per frame of the take, at least 7000
+    iterations: int = -1  # -1 = 250 per frame of the take (of each segment, for a long take), at least 7000
+    segment_frames: int = SEGMENT_FRAMES  # a longer take is trained in segments of about this many frames (0 = never)
+    segment_overlap: int = 2  # frames of context a segment sees beyond each of its ends
 
     # --- model --------------------------------------------------------------
     static: bool = False  # True: plain 3DGS of one instant
@@ -157,9 +166,11 @@ class BatchLoader:
     """Samples the batches of every step and decodes their frames in background."""
 
     def __init__(self, ds: MultiViewDataset, train_cams: list[str], cfg: TrainConfig,
-                 iterations: int, jobs_per_step: int, static_frame: int | None):
+                 iterations: int, jobs_per_step: int, static_frame: int | None,
+                 window: tuple[int, int] | None = None):
         self.ds, self.cams, self.cfg, self.iterations = ds, train_cams, cfg, iterations
         self.jobs_per_step, self.static_frame = jobs_per_step, static_frame
+        self.window = window or (0, ds.num_frames)
         self._rng = random.Random(cfg.seed)
         self._queue: queue.Queue = queue.Queue(maxsize=6)
         self._stop = threading.Event()
@@ -177,7 +188,7 @@ class BatchLoader:
                 picked = [order[(j * per_job + k) % len(order)] for k in range(per_job)]
                 jobs.append((self.static_frame, list(dict.fromkeys(picked))))
             return jobs
-        return [(self._rng.randrange(self.ds.num_frames), self._rng.sample(self.cams, per_job))
+        return [(self._rng.randrange(*self.window), self._rng.sample(self.cams, per_job))
                 for _ in range(self.jobs_per_step)]
 
     def _put(self, item) -> bool:
@@ -248,8 +259,8 @@ def _merge_info(results: list[tuple[dict, torch.Tensor | None]], total: int, dev
             "n_cameras": grads.shape[0], "gaussian_ids": None}
 
 
-def _initial_points(ds: MultiViewDataset, cfg: TrainConfig, static_frame: int | None):
-    """Positions, colours and frame index of the starting points, plus their frame spacing."""
+def _initial_points(ds: MultiViewDataset, cfg: TrainConfig, static_frame: int | None, window: tuple[int, int]):
+    """Positions, colours and frame index of the starting points of ``window``, plus their frame spacing."""
     ply = ds.root / "init_points.ply"
     if ply.exists():
         xyz, rgb, frames = read_points_ply(ply)
@@ -258,15 +269,22 @@ def _initial_points(ds: MultiViewDataset, cfg: TrainConfig, static_frame: int | 
             nearest = frames[np.argmin(np.abs(frames - static_frame))]
             keep = frames == nearest
             xyz, rgb, frames = xyz[keep], rgb[keep], np.full(int(keep.sum()), static_frame)
-        return xyz, rgb, frames, step
-    print("[train] WARNING: no init_points.ply (run 'mister4d init'); "
-          "starting from random points in the capture volume")
+        else:
+            keep = (frames >= window[0]) & (frames < window[1])
+            xyz, rgb, frames = xyz[keep], rgb[keep], frames[keep]
+        if len(xyz):
+            return xyz, rgb, frames, step
+        print(f"[train] WARNING: no starting points for frames {window[0]}-{window[1] - 1}; "
+              "starting from random points in the capture volume")
+    else:
+        print("[train] WARNING: no init_points.ply (run 'mister4d init'); "
+              "starting from random points in the capture volume")
     vol = ds.rig.volume or {"center": [0, 0, 0], "size": [2, 2, 2]}
     rng = np.random.default_rng(cfg.seed)
     center, size = np.array(vol["center"], float), np.array(vol["size"], float)
     n = cfg.init_random_points
     xyz = (center + (rng.random((n, 3)) - 0.5) * size).astype(np.float32)
-    frames = np.full(n, static_frame) if static_frame is not None else rng.integers(0, ds.num_frames, n)
+    frames = np.full(n, static_frame) if static_frame is not None else rng.integers(window[0], window[1], n)
     return xyz, np.full_like(xyz, 0.5), frames, 1
 
 
@@ -289,7 +307,17 @@ def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=
     return {"psnr": float(np.mean(values))}
 
 
-def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
+def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
+                  window: tuple[int, int] | None = None, core: tuple[int, int] | None = None,
+                  fixed_offsets: dict | None = None, start: dict | None = None) -> tuple[Path, dict]:
+    """One training: the whole take, or the frames ``window`` of a long one.
+
+    ``core`` are the frames this scene will be used for (the window without
+    the context at its ends). ``fixed_offsets`` are camera time offsets learned
+    on an earlier segment. ``start`` are the parameters of an existing scene to
+    refine instead of starting from the visual hull (no densification then).
+    Returns the checkpoint and its summary.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     np.random.seed(cfg.seed)
@@ -316,20 +344,26 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
     static_frame = None
     if static:
         static_frame = min(ds.num_frames // 2 if cfg.static_frame < 0 else cfg.static_frame, ds.num_frames - 1)
+    window = window or (0, ds.num_frames)
+    core = core or window
     iterations = cfg.iterations
     if iterations <= 0:
-        iterations = 7000 if static else max(7000, 250 * ds.num_frames)
+        iterations = 7000 if static else max(7000, 250 * (window[1] - window[0]))
 
-    xyz, rgb, frames, frame_step = _initial_points(ds, cfg, static_frame)
-    velocities = estimate_velocities(xyz, frames) if cfg.init_velocities and not static else None
-    params = init_gaussian_params(xyz, rgb, frames, cfg.sh_degree, cfg.init_opacity,
-                                  cfg.init_duration * frame_step, velocities)
+    if start is not None:
+        params = torch.nn.ParameterDict({k: torch.nn.Parameter(v.clone()) for k, v in start.items()})
+    else:
+        xyz, rgb, frames, frame_step = _initial_points(ds, cfg, static_frame, window)
+        velocities = estimate_velocities(xyz, frames) if cfg.init_velocities and not static else None
+        params = init_gaussian_params(xyz, rgb, frames, cfg.sh_degree, cfg.init_opacity,
+                                      cfg.init_duration * frame_step, velocities)
     scene = DynamicScene(params, cfg.sh_degree, static).to(master)
 
-    lrs = {"means": cfg.lr_means * cam_dist, "scales": cfg.lr_scales, "quats": cfg.lr_quats,
+    refine = 0.1 if start is not None else 1.0  # an existing scene only needs small moves
+    lrs = {"means": cfg.lr_means * cam_dist * refine, "scales": cfg.lr_scales, "quats": cfg.lr_quats,
            "opacities": cfg.lr_opacities, "sh0": cfg.lr_sh0, "shN": cfg.lr_shN,
-           "times": cfg.lr_times, "durations": cfg.lr_durations,
-           "velocities": cfg.lr_velocities * cam_dist}
+           "times": cfg.lr_times * refine, "durations": cfg.lr_durations,
+           "velocities": cfg.lr_velocities * cam_dist * refine}
     optimizers = {
         name: torch.optim.Adam([{"params": scene.params[name], "lr": lr, "name": name}], eps=1e-15)
         for name, lr in lrs.items()
@@ -342,7 +376,10 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
     # to the first one. The scene is continuous in time, so a camera that was
     # exposed a fraction of a frame late is simply rendered that much later.
     offsets = offset_opt = None
-    if cfg.learn_time_offsets and not static:
+    if fixed_offsets and not static:  # learned on the first segment: a camera keeps its clock
+        offsets = torch.tensor([float(fixed_offsets.get(c, 0.0)) for c in train_cams], device=master)
+        offset_free = torch.ones(len(train_cams), device=master)
+    elif cfg.learn_time_offsets and not static:
         offsets = torch.nn.Parameter(torch.zeros(len(train_cams), device=master))
         offset_opt = torch.optim.Adam([offsets], lr=cfg.lr_time_offsets)
         offset_free = torch.ones(len(train_cams), device=master)
@@ -356,7 +393,7 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
     # Densification: gsplat's default strategy (clone / split / prune). Two
     # instances share one state so that growth can be switched off at the cap.
     strategy_state = None
-    if cfg.densify:
+    if cfg.densify and start is None:
         from gsplat.strategy import DefaultStrategy
         from gsplat.strategy.ops import remove, reset_opa
 
@@ -379,6 +416,8 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
         "radius": radius,
         "backend": backends[0],
         "static_frame": static_frame,
+        "segment": list(core),  # the frames this scene is used for
+        "window": list(window),  # the frames it was trained on
         # Everything the render / export commands need, so that a checkpoint
         # stays usable without the dataset next to it.
         "cameras": {name: cam.to_dict() for name, cam in ds.rig.cameras.items()},
@@ -392,7 +431,7 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
 
     print(f"[train] devices={[str(d) for d in devices]} backend={backends[0]} "
           f"cameras={train_cams} holdout={val_cams}")
-    print(f"[train] frames={ds.num_frames} size={ds.width}x{ds.height} "
+    print(f"[train] frames={window[1] - window[0]} size={ds.width}x{ds.height} "
           f"masks={'yes' if ds.has_masks else 'NO'} gaussians={scene.num_gaussians} "
           f"model={'static, frame ' + str(static_frame) if static else 'dynamic'} "
           f"iterations={iterations} images/step={len(devices) * min(cfg.views_per_step, len(train_cams))}")
@@ -408,9 +447,9 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
 
     cam_index = {c: i for i, c in enumerate(train_cams)}
     cam_tensors = {str(d): ds.camera_tensors(train_cams, d) for d in set(devices)}
-    eval_frames = [static_frame] if static else sorted({0, ds.num_frames // 2, ds.num_frames - 1})
+    eval_frames = [static_frame] if static else sorted({core[0], (core[0] + core[1]) // 2, core[1] - 1})
     eval_cams = val_cams or train_cams
-    loader = BatchLoader(ds, train_cams, cfg, iterations, len(devices), static_frame)
+    loader = BatchLoader(ds, train_cams, cfg, iterations, len(devices), static_frame, window)
     workers = ThreadPoolExecutor(len(devices)) if len(devices) > 1 else None
     log_file = open(out_dir / "train_log.jsonl", "w")
     t_start = time.time()
@@ -522,10 +561,81 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
     ckpt_path = out_dir / "ckpt.pt"
     save_checkpoint(ckpt_path, scene, cfg_dict, meta, iterations)
     # The outcome in a small text file, for tools that should not have to load the checkpoint.
-    (out_dir / "train_summary.json").write_text(json.dumps({
+    summary = {
         "iterations": iterations, "seconds": round(time.time() - t_start, 1),
-        "gaussians": scene.num_gaussians, "frames": ds.num_frames, "fps": ds.fps,
+        "gaussians": scene.num_gaussians, "frames": core[1] - core[0], "fps": ds.fps,
         "train_cameras": train_cams, "holdout_cameras": val_cams, "devices": [str(d) for d in devices],
-        "time_offsets": meta["time_offsets"], "coverage": coverage}, indent=2))
+        "time_offsets": meta["time_offsets"], "coverage": coverage}
+    (out_dir / "train_summary.json").write_text(json.dumps(summary, indent=2))
     print(f"[train] done in {time.time() - t_start:.0f}s -> {ckpt_path}")
-    return ckpt_path
+    return ckpt_path, summary
+
+
+# Options that change how a training runs but not what it produces.
+_NOT_IN_RESULT = ("devices", "loader_threads", "cache_gb", "log_every", "eval_every", "save_every")
+
+
+def _fingerprint(data_dir: Path) -> str:
+    """Changes whenever the dataset is prepared, masked or initialised again."""
+    parts = []
+    for name in ("meta.json", "calibration.json", "init_points.ply", "masks_preview.jpg"):
+        f = data_dir / name
+        parts.append(f"{name}:{f.stat().st_size}:{f.stat().st_mtime_ns}" if f.exists() else f"{name}:-")
+    return hashlib.sha1("|".join(parts).encode()).hexdigest()
+
+
+def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig, resume: bool = True) -> Path:
+    """Train a take; returns its checkpoint, or the manifest of its segments.
+
+    A take longer than about one and a half ``cfg.segment_frames`` is trained
+    in segments. With ``resume`` the segments already trained from the same
+    data with the same options are kept: starting the same command again
+    continues an interrupted job.
+    """
+    data_dir, out_dir = Path(data_dir), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    num_frames = len(read_meta(data_dir)["frame_ids"])
+    static = cfg.static or num_frames == 1
+    segments = [(0, num_frames)] if static else plan_segments(num_frames, cfg.segment_frames)
+    manifest = out_dir / MANIFEST
+    manifest.unlink(missing_ok=True)  # it is there only while every segment is
+    if len(segments) == 1:
+        return _train_window(data_dir, out_dir, cfg)[0]
+
+    (out_dir / "ckpt.pt").unlink(missing_ok=True)  # of an earlier, shorter take
+    identity = json.loads(json.dumps({
+        "fingerprint": _fingerprint(data_dir),
+        "config": {k: v for k, v in dataclasses.asdict(cfg).items() if k not in _NOT_IN_RESULT}}))
+    print(f"[train] long take: {num_frames} frames in {len(segments)} segments", flush=True)
+    t_start = time.time()
+    done, summaries, offsets = [], [], None
+    for i, (first, last) in enumerate(segments):
+        seg = segment_dir(out_dir, i)
+        window = (max(first - cfg.segment_overlap, 0), min(last + cfg.segment_overlap, num_frames))
+        tag = {**identity, "segment": [first, last], "window": list(window), "fixed_offsets": offsets}
+        tag_file, summary_file = seg / "segment.json", seg / "train_summary.json"
+        print(f"[train] segment={i + 1}/{len(segments)} frames={first}-{last - 1}", flush=True)
+        kept = (resume and (seg / "ckpt.pt").exists() and tag_file.exists() and summary_file.exists()
+                and json.loads(tag_file.read_text()) == tag)
+        if kept:
+            summary = json.loads(summary_file.read_text())
+            print(f"[train] segment {i + 1} is already trained with these data and options: kept", flush=True)
+        else:
+            seg.mkdir(parents=True, exist_ok=True)
+            tag_file.unlink(missing_ok=True)
+            _, summary = _train_window(data_dir, seg, cfg, window=window, core=(first, last), fixed_offsets=offsets)
+            tag_file.write_text(json.dumps(tag, indent=2))
+        if i == 0 and cfg.learn_time_offsets:
+            offsets = summary["time_offsets"]  # one clock per camera for the whole take
+        summaries.append(summary)
+        done.append({"dir": seg.name, "first": first, "last": last, "gaussians": summary["gaussians"]})
+
+    total = {**summaries[0],
+             "iterations": sum(x["iterations"] for x in summaries),
+             "seconds": round(sum(x["seconds"] for x in summaries), 1),
+             "gaussians": sum(x["gaussians"] for x in summaries),
+             "frames": num_frames, "segments": len(segments)}
+    (out_dir / "train_summary.json").write_text(json.dumps(total, indent=2))
+    write_manifest(out_dir, done, frames=num_frames)
+    print(f"[train] all {len(segments)} segments done in {time.time() - t_start:.0f}s -> {manifest}", flush=True)
+    return manifest

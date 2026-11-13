@@ -11,6 +11,8 @@ cache_gb: 16             # RAM for decoded frames; raise it if the take fits in 
 # -1 = 250 steps per frame of the take (at least 7000). Every frame has its own
 # Gaussians, so longer takes need proportionally more steps.
 iterations: -1
+segment_frames: 60        # a longer take is trained in segments of about this many frames (0 = never)
+segment_overlap: 2        # frames of context a segment sees beyond each of its ends
 
 # Few cameras cannot constrain view-dependent colour: keep 0 below ~8 cameras,
 # try 1-2 with a full ring.

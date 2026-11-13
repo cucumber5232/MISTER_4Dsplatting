@@ -185,24 +185,36 @@ def _h264_available(ffmpeg: str) -> bool:
 
 
 class VideoWriter:
-    """Write RGB uint8 frames to an .mp4 through an ffmpeg pipe."""
+    """Write uint8 frames to a video through an ffmpeg pipe.
+
+    ``.mp4`` is H.264, for viewing. ``.mov`` is ProRes, the usual intermediate
+    of editing software: 422 HQ, or 4444 with an alpha channel when ``alpha``
+    is set (frames are then RGBA, colour not multiplied by alpha).
+    """
 
     def __init__(self, path: str | Path, width: int, height: int, fps: float,
-                 audio: str | Path | None = None, crf: int = 16):
+                 audio: str | Path | None = None, crf: int = 16, alpha: bool = False):
         ffmpeg = _require("ffmpeg")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        cmd = [ffmpeg, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
+        prores = Path(path).suffix.lower() == ".mov"
+        if alpha and not prores:
+            raise VideoError("a transparent background needs a .mov file (ProRes 4444) or a folder of PNG images")
+        cmd = [ffmpeg, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba" if alpha else "rgb24",
                "-s", f"{width}x{height}", "-r", str(fps), "-i", "-"]
         if audio is not None:
             cmd += ["-i", str(audio), "-c:a", "aac", "-shortest"]
-        # libx264 needs even dimensions; pad by one pixel if necessary.
-        cmd += ["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"]
-        if _h264_available(ffmpeg):
-            cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", str(crf), "-pix_fmt", "yuv420p"]
+        if prores:
+            cmd += ["-c:v", "prores_ks", "-profile:v", "4444" if alpha else "hq",
+                    "-pix_fmt", "yuva444p10le" if alpha else "yuv422p10le", "-vendor", "apl0"]
         else:
-            cmd += ["-c:v", "mpeg4", "-q:v", "2"]
+            # libx264 needs even dimensions; pad by one pixel if necessary.
+            cmd += ["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"]
+            if _h264_available(ffmpeg):
+                cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", str(crf), "-pix_fmt", "yuv420p"]
+            else:
+                cmd += ["-c:v", "mpeg4", "-q:v", "2"]
         cmd += [str(path)]
-        self._shape = (height, width, 3)
+        self._shape = (height, width, 4 if alpha else 3)
         self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def write(self, frame: np.ndarray) -> None:

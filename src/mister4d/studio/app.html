@@ -239,8 +239,10 @@
       <dl class="explain">
         <div><dt>Che cosa succede</dt>
           <dd>Dalle sagome viste dalle camere si ricava prima una forma grezza del soggetto, istante per istante. Poi la scena viene descritta con moltissime piccole macchie colorate e sfumate, le gaussiane, che vengono spostate e corrette migliaia di volte finché le immagini calcolate dal punto di vista di ogni camera assomigliano il più possibile a quelle vere.</dd></div>
+        <div><dt>Riprese lunghe</dt>
+          <dd>Una ripresa più lunga di circa tre secondi viene ricostruita a spezzoni di due secondi, uno dopo l'altro: così il tempo e la memoria richiesti da ogni spezzone non dipendono dalla durata della ripresa. Il tempo totale cresce in proporzione alla durata.</dd></div>
         <div><dt>Durata e interruzione</dt>
-          <dd>Durante il calcolo vedi l'avanzamento e una stima del tempo che resta. Puoi lasciare la pagina aperta e fare altro. I passi precedenti restano sempre validi.</dd></div>
+          <dd>Durante il calcolo vedi l'avanzamento e una stima del tempo che resta. Puoi lasciare la pagina aperta e fare altro. Se interrompi o chiudi il programma durante una ripresa lunga, gli spezzoni già finiti restano: ripetendo il passo il lavoro riprende dal primo mancante. I passi precedenti restano sempre validi.</dd></div>
       </dl>
     </details>
     <div class="field">
@@ -250,6 +252,15 @@
         toglie informazione. Per il risultato da consegnare scegli «Nessuna».</p>
     </div>
     <div class="check-row"><label class="check"><input type="checkbox" data-option="learn_time_offsets"> <span>Le camere non hanno sincronizzazione hardware: stima gli scarti di tempo tra una e l'altra</span></label><button class="info" type="button" popovertarget="tip-offsets" aria-label="Spiegazione: scarti di tempo tra le camere"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
+    <fieldset class="field">
+      <legend>Peso della scena<button class="info" type="button" popovertarget="tip-weight" aria-label="Spiegazione: peso della scena"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></legend>
+      <div class="choices segmented wide" role="radiogroup">
+        <label><input type="radio" name="weight" value="1"><span>Massimo dettaglio</span></label>
+        <label><input type="radio" name="weight" value="2"><span>Bilanciata</span></label>
+        <label><input type="radio" name="weight" value="3"><span>Leggera</span></label>
+      </div>
+      <p class="hint">La scena leggera pesa circa un terzo: è la scelta per le riprese lunghe e per i visori autonomi.</p>
+    </fieldset>
     <details class="fold advanced">
       <summary>Opzioni avanzate</summary>
       <div class="field-grid">
@@ -267,20 +278,36 @@
   <section class="step" data-step="risultato" aria-labelledby="t-risultato" hidden>
     <p class="eyebrow">06 / Risultato</p>
     <h2 id="t-risultato">Guardare e consegnare</h2>
-    <p class="lead">Si creano il player, un file unico da aprire con doppio clic, e un video dimostrativo.
+    <p class="lead">Si creano il player, che si apre con doppio clic, e un video dimostrativo. Qui si chiede
+      anche il materiale per il montaggio e per il visore.
       Se hai tenuto una camera di verifica viene misurata anche la qualità.</p>
     <details class="fold explain">
       <summary>Come funziona questo passo</summary>
       <dl class="explain">
         <div><dt>Il player</dt>
-          <dd>È un solo file, player.html, che contiene sia la scena sia il programma per guardarla. Si apre con doppio clic in un browser recente, anche su un altro computer e senza connessione. Dentro si può far partire e fermare la scena, girarle intorno e guardarla dal punto di vista di ciascuna camera.</dd></div>
+          <dd>Contiene sia la scena sia il programma per guardarla: si apre con doppio clic in un browser recente, anche su un altro computer e senza connessione. Dentro si può far partire e fermare la scena, girarle intorno e guardarla dal punto di vista di ciascuna camera. Per una ripresa breve è un solo file, player.html. Per una ripresa lunga è una cartella, player, che carica la scena un pezzo alla volta: si apre con doppio clic su index.html e va consegnata intera.</dd></div>
         <div><dt>Il video dimostrativo</dt>
-          <dd>orbita.mp4 è un filmato di otto secondi in cui il punto di vista gira intorno al soggetto: serve per mostrare il risultato a chi non può aprire il player.</dd></div>
+          <dd>orbita.mp4 è un filmato in cui il punto di vista gira intorno al soggetto: otto secondi per una ripresa breve, la ripresa intera per una lunga. Serve per mostrare il risultato a chi non può aprire il player.</dd></div>
         <div><dt>La qualità misurata</dt>
           <dd>Compare solo se al passo 05 hai tenuto una camera di verifica. «Sagoma corretta» dice quanto il contorno ricostruito coincide con quello vero: 100% è perfetto. «Fedeltà dell'immagine» si misura in decibel: più è alta, più l'immagine ricostruita somiglia a quella vera; sopra 25 è buona. «Sfarfallio» dice quanto l'immagine trema da un fotogramma all'altro oltre il movimento reale: più è bassa, meglio è.</dd></div>
         <div><dt>Se il risultato non convince</dt>
           <dd>Le cause più frequenti sono poche camere o camere troppo lontane tra loro (passo 03), maschere imprecise (passo 04) e movimenti veloci con camere non sincronizzate (passo 05).</dd></div>
       </dl>
+    </details>
+    <details class="fold advanced">
+      <summary>Materiale per il montaggio e per il visore</summary>
+      <div class="extras">
+        <div class="check-row"><label class="check"><input type="checkbox" data-option="extra_subject">
+          <span>Video del soggetto su sfondo trasparente</span></label><button class="info" type="button" popovertarget="tip-subject" aria-label="Spiegazione: video del soggetto su sfondo trasparente"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
+        <div class="field narrow sub"><label for="opt-subject_view">Punto di vista del video</label>
+          <select id="opt-subject_view" data-option="subject_view"><option value="">Giro intorno al soggetto</option></select></div>
+        <div class="check-row"><label class="check"><input type="checkbox" data-option="extra_headset">
+          <span>Versione leggera per visore autonomo</span></label><button class="info" type="button" popovertarget="tip-headset" aria-label="Spiegazione: versione leggera per visore autonomo"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
+        <div class="field narrow sub"><div class="label-row"><label for="opt-headset_budget">Gaussiane visibili insieme, al massimo</label><button class="info" type="button" popovertarget="tip-budget" aria-label="Spiegazione: gaussiane visibili insieme"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
+          <input id="opt-headset_budget" data-option="headset_budget" type="number" min="1000" step="5000" inputmode="numeric"></div>
+        <div class="check-row"><label class="check"><input type="checkbox" data-option="extra_ply">
+          <span>Sequenza di file PLY per altri programmi 3D</span></label><button class="info" type="button" popovertarget="tip-ply" aria-label="Spiegazione: sequenza di file PLY"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
+      </div>
     </details>
     <div class="actions"><button class="btn primary" type="button" data-run="risultato">Crea player e video</button></div>
   </section>
@@ -305,6 +332,11 @@
     <div id="tip-offsets" class="panel tip" popover><p>Senza sincronizzazione hardware le camere scattano in momenti leggermente diversi, fino a mezzo fotogramma. Con movimenti veloci le parti in moto appaiono sdoppiate.</p><p>Spuntando la casella, il programma stima il piccolo ritardo di ogni camera e ne tiene conto. Funziona solo se nella scena c'è movimento.</p></div>
     <div id="tip-iterations" class="panel tip" popover><p>È il numero di correzioni successive che il programma fa sulla scena. Lasciato vuoto, viene scelto in base alla durata della ripresa.</p><p>Meno passi fanno prima ma lasciano la scena meno definita.</p></div>
     <div id="tip-devices" class="panel tip" popover><p>Di norma vengono usate tutte insieme. Indicane una sola, per esempio cuda:0, se l'altra serve per altro.</p></div>
+    <div id="tip-weight" class="panel tip" popover><p>Nella scena di massimo dettaglio le gaussiane vengono sostituite a ogni fotogramma. In quella bilanciata e in quella leggera ogni gaussiana dura due o tre fotogrammi e si muove insieme al soggetto: ne servono la metà o un terzo, e il file pesa in proporzione.</p><p>Nelle prove sulle riprese di esempio la scena leggera ha dato la stessa qualità dai punti di vista nuovi e poco meno da quelli delle camere. Con movimenti molto rapidi può perdere nitidezza: in quel caso scegli «Bilanciata».</p></div>
+    <div id="tip-subject" class="panel tip" popover><p>Un filmato della ripresa intera con il solo soggetto e lo sfondo trasparente, in formato ProRes 4444 (soggetto.mov): si importa nei programmi di montaggio e si sovrappone ad altre immagini.</p><p>Il punto di vista può girare intorno al soggetto oppure stare dove stava una delle camere.</p></div>
+    <div id="tip-headset" class="panel tip" popover><p>Un visore autonomo disegna molte meno gaussiane di una workstation. Questa versione tiene, in ogni istante, solo quelle che contribuiscono di più all'immagine, poi le ritocca perché facciano anche il lavoro di quelle tolte.</p><p>Il risultato è una cartella, player_visore, più leggera di quella normale. Richiede un calcolo in più, breve rispetto alla ricostruzione.</p></div>
+    <div id="tip-budget" class="panel tip" popover><p>È quante gaussiane il visore deve disegnare nello stesso istante. Più il numero è basso, più la scena è leggera e meno è dettagliata.</p><p>80.000 è un punto di partenza prudente: il valore giusto per il vostro visore va trovato provando.</p></div>
+    <div id="tip-ply" class="panel tip" popover><p>Un file .ply per fotogramma, nel formato standard del Gaussian Splatting, leggibile dai programmi e dai motori grafici che lo supportano.</p><p>Sono file non compressi: occupano molto più spazio del player.</p></div>
 </div>
 
 <div id="toast" class="panel toast" role="alert" hidden></div>

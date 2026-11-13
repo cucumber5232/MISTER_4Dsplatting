@@ -387,6 +387,8 @@
       select.dataset.key = names.join('|');
       select.replaceChildren(el('option', { value: '', text: 'Nessuna: usa tutte le camere' }),
         ...names.map((name) => el('option', { value: name, text: name })));
+      $('#opt-subject_view').replaceChildren(el('option', { value: '', text: 'Giro intorno al soggetto' }),
+        ...names.map((name) => el('option', { value: name, text: `Dal punto di ${name}` })));
     }
   }
 
@@ -403,12 +405,15 @@
         if (input.value !== value) input.value = value;
       }
     }
-    for (const name of ['sync', 'downscale']) {
+    for (const name of ['sync', 'downscale', 'weight']) {
       for (const radio of $$(`input[name="${name}"]`)) {
         radio.disabled = locked;
         if (!dirty.has(name)) radio.checked = radio.value === String(options[name]);
       }
     }
+    // What belongs to an output that was not asked for stays off.
+    $('#opt-subject_view').disabled = locked || !options.extra_subject;
+    $('#opt-headset_budget').disabled = locked || !options.extra_headset;
   }
 
   function renderStep(step) {
@@ -645,6 +650,7 @@
         ['Camere usate', num(summary.train_cameras.length)
           + (summary.holdout_cameras.length ? `, più ${summary.holdout_cameras.join(', ')} di verifica` : '')],
         ['Elementi che compongono la scena', `${num(summary.gaussians)} gaussiane`],
+        summary.segments > 1 && ['Spezzoni', num(summary.segments)],
         ['Calcolo', gpus.length ? count(gpus.length, 'scheda grafica', 'schede grafiche')
           : 'processore, senza scheda grafica'],
         offsets.length && ['Scarti di tempo stimati',
@@ -654,19 +660,45 @@
     },
 
     risultato(summary) {
-      const block = resultBlock('', 'Risultato pronto', 'Nella cartella del risultato trovi player.html e orbita.mp4. '
-        + 'Il player è un file unico: si copia su un altro computer e si apre con doppio clic, senza installare nulla.');
-      if (!summary) return block;
+      if (!summary) return resultBlock('', 'Risultato pronto', '');
+      const size = (mb) => (mb >= 1000 ? `${num(mb / 1000, 1)} GB` : `${num(mb, mb < 10 ? 1 : 0)} MB`);
+      const block = resultBlock('', 'Risultato pronto', summary.player_folder
+        ? `Nella cartella del risultato trovi la cartella player (${size(summary.player_mb)}) e orbita.mp4. La ripresa `
+          + 'è lunga, quindi il player carica la scena un pezzo alla volta: si apre con doppio clic su index.html e va '
+          + 'consegnato copiando tutta la cartella.'
+        : `Nella cartella del risultato trovi player.html (${size(summary.player_mb)}) e orbita.mp4. Il player è un `
+          + 'file unico: si copia su un altro computer e si apre con doppio clic, senza installare nulla.');
       if (summary.video) {
         block.append(el('figure', {}, el('video', { src: summary.video_url, controls: true, loop: true, muted: true,
           playsinline: true, preload: 'metadata', 'aria-label': 'Video dimostrativo: la camera gira intorno alla scena' })));
       }
       block.append(el('div', { class: 'deliver' },
-        summary.player && el('a', { class: 'btn primary', href: '/project/risultato/player.html', target: '_blank',
+        summary.player && el('a', { class: 'btn primary', href: summary.player_url, target: '_blank',
           rel: 'noopener', text: 'Apri il player' }),
         el('button', { class: 'btn', type: 'button', text: 'Apri la cartella del risultato',
           onclick: () => send('/api/open', { what: 'result' }) })));
       const wrap = el('div', {}, block);
+      if (summary.extras.length) {
+        const made = el('div', { class: 'result' }, el('h3', { text: 'Materiale per il montaggio e per il visore' }));
+        const lines = summary.extras.map((extra) => {
+          if (extra.kind === 'subject') {
+            return ['Soggetto su sfondo trasparente', `${extra.name} · ${size(extra.mb)} · ProRes 4444`];
+          }
+          if (extra.kind === 'headset') {
+            const perSecond = extra.frames > 1 ? ` · ${size(extra.mb / (extra.frames / extra.fps))} al secondo` : '';
+            return ['Versione per visore autonomo', `cartella ${extra.name} · ${size(extra.mb)}${perSecond} · `
+              + `al massimo ${num(extra.visible)} gaussiane insieme`];
+          }
+          return ['Sequenza PLY', `cartella ${extra.name} · ${count(extra.files, 'file', 'file')} · ${size(extra.mb)}`];
+        });
+        made.append(rows(lines));
+        const headset = summary.extras.find((extra) => extra.kind === 'headset');
+        if (headset) {
+          made.append(el('div', { class: 'deliver' }, el('a', { class: 'btn', href: headset.url, target: '_blank',
+            rel: 'noopener', text: 'Apri la versione per visore' })));
+        }
+        wrap.append(made);
+      }
       const quality = summary.quality;
       if (quality && known(quality.iou)) {
         const subject = known(quality.psnr_subject) ? quality.psnr_subject : quality.psnr;
@@ -764,8 +796,8 @@
         saveOption(key, value);
       } else if (input.matches('input[name="sync"]')) {
         saveOption('sync', input.value);
-      } else if (input.matches('input[name="downscale"]')) {
-        saveOption('downscale', Number(input.value));
+      } else if (input.matches('input[name="downscale"], input[name="weight"]')) {
+        saveOption(input.name, Number(input.value));
       } else if (input.matches('[data-path]')) {
         saveVideo(input.closest('[data-clip]').dataset.clip, input.value.trim());
       }

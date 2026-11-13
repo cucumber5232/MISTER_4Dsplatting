@@ -168,6 +168,50 @@ def test_the_panel_to_print_follows_the_calibration_options(studio):
     assert (studio.project / board["file"]).stat().st_size > 1000
 
 
+def test_a_lighter_scene_asks_for_longer_lived_gaussians(studio, tmp_path):
+    studio.set_videos(make_clips(tmp_path / "riprese"))
+    studio.set_options({"weight": 3})
+    init, train = cli_args(studio, "ricostruzione")
+    assert init[init.index("--frame-step") + 1] == "3"
+    assert "max_gaussians=666666" in train[train.index("--set") + 1:]
+    assert "--fresh" not in train
+
+    run = studio.result / "run"
+    run.mkdir(parents=True)
+    (run / "ckpt.pt").write_bytes(b"")
+    assert "--fresh" in cli_args(studio, "ricostruzione")[1]  # it was complete: repeated on purpose
+    (run / "ckpt.pt").unlink()
+    (run / "seg_000").mkdir()
+    assert "--fresh" not in cli_args(studio, "ricostruzione")[1]  # it was interrupted: continue
+
+
+def test_a_long_take_and_the_extras_change_what_the_last_step_makes(studio):
+    run = studio.result / "run"
+    run.mkdir(parents=True)
+    (run / "train_summary.json").write_text(json.dumps(
+        {"segments": 5, "frames": 300, "fps": 30.0, "holdout_cameras": []}))
+    studio.set_options({"extra_subject": True, "subject_view": "cam02", "extra_headset": True,
+                        "headset_budget": 50000, "extra_ply": True})
+    cmds = cli_args(studio, "risultato")
+    assert [c[0] for c in cmds] == ["render", "export", "render", "lighten", "export", "export"]
+    assert "--take" in cmds[0]  # ten seconds: shown once, whole
+    assert cmds[1][cmds[1].index("--format") + 1] == "web"  # a folder that loads the take piece by piece
+    assert "--transparent" in cmds[2] and cmds[2][cmds[2].index("--camera") + 1] == "cam02"
+    assert cmds[2][cmds[2].index("--out") + 1].endswith("soggetto.mov")
+    assert cmds[3][cmds[3].index("--budget") + 1] == "50000"
+    assert cmds[4][1].endswith("run_visore") and cmds[5][cmds[5].index("--format") + 1] == "ply"
+
+
+def test_progress_of_a_long_take_counts_its_segments():
+    job = app.Job(["ricostruzione"])
+    job.read("[train] segment=3/4 frames=120-179")
+    assert job.progress == pytest.approx(0.5) and "3 di 4" in job.detail
+    job.read("[train] frames=64 size=960x540 masks=yes gaussians=1000 model=dynamic iterations=1000 images/step=4")
+    job.read("[train] step=499  loss=0.02  l1=0.01  gaussians=1000  seconds=50.0")
+    assert job.progress == pytest.approx(0.625)
+    assert job.eta == pytest.approx(50 / 499 * (501 + 1000), rel=0.01)  # the rest of this segment, and one more
+
+
 def test_quality_is_measured_only_with_a_checking_camera(studio):
     assert [argv[0] for argv in cli_args(studio, "risultato")] == ["render", "export"]
     run = studio.result / "run"
