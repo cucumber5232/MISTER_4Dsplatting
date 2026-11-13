@@ -5,57 +5,316 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MISTER 4D Player</title>
 <style>
+  /* ------------------------------------------------------------- tokens */
   :root {
-    --bg: #101216; --panel: rgba(22, 25, 31, 0.86); --line: rgba(255, 255, 255, 0.12);
-    --text: #e9ecf1; --muted: #9aa3b2; --accent: #8f7ae6;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --r-panel: 16px; --r-control: 10px; --r-pill: 999px;
+    --gap: 12px; --edge: 16px; --control: 40px; --sidebar: 320px;
+    --ease: cubic-bezier(.2, .7, .2, 1);
   }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
-  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  body[data-theme="dark"] {
+    --glass: rgba(20, 22, 29, .58); --glass-solid: rgba(20, 22, 29, .92);
+    --stroke: rgba(255, 255, 255, .10); --stroke-strong: rgba(255, 255, 255, .20);
+    --text: #f2f4f8; --text-2: #b9c0cd; --text-3: #8d96a7;
+    --fill: rgba(255, 255, 255, .07); --fill-hover: rgba(255, 255, 255, .13); --track: rgba(255, 255, 255, .18);
+    --accent: #a898ff; --on-accent: #15122c; --accent-soft: rgba(168, 152, 255, .18);
+    --shadow: 0 12px 40px rgba(0, 0, 0, .45); --danger: #ff8f8f;
+  }
+  body[data-theme="light"] {
+    --glass: rgba(255, 255, 255, .62); --glass-solid: rgba(255, 255, 255, .94);
+    --stroke: rgba(15, 20, 35, .10); --stroke-strong: rgba(15, 20, 35, .22);
+    --text: #161a22; --text-2: #454d5e; --text-3: #5f687a;
+    --fill: rgba(15, 20, 35, .06); --fill-hover: rgba(15, 20, 35, .11); --track: rgba(15, 20, 35, .18);
+    --accent: #5a45d6; --on-accent: #ffffff; --accent-soft: rgba(90, 69, 214, .14);
+    --shadow: 0 12px 36px rgba(30, 35, 60, .18); --danger: #b3261e;
+  }
+
+  /* --------------------------------------------------------------- base */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { font: 14px/1.45 var(--font); color: var(--text); background: #0b0c10;
+    -webkit-font-smoothing: antialiased; }
+  h1, h2, h3, p, dl, dd { margin: 0; }
+  button, select, input { font: inherit; color: inherit; }
+  [hidden] { display: none !important; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
+    touch-action: none; cursor: grab; }
   canvas.dragging { cursor: grabbing; }
-  .panel { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    backdrop-filter: blur(8px); }
-  #info { top: 14px; left: 14px; padding: 10px 14px; max-width: min(360px, calc(100vw - 28px)); }
-  #info h1 { margin: 0 0 2px; font-size: 14px; font-weight: 650; letter-spacing: 0.02em; }
-  #info p { margin: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-  #bar { left: 14px; right: 14px; bottom: 14px; padding: 10px 12px; display: flex; flex-wrap: wrap;
-    align-items: center; gap: 10px 12px; }
-  #bar button, #bar select { background: rgba(255, 255, 255, 0.06); color: var(--text);
-    border: 1px solid var(--line); border-radius: 7px; height: 32px; padding: 0 10px; font: inherit; }
-  #bar button { min-width: 74px; cursor: pointer; }
-  #bar button:hover, #bar select:hover { border-color: var(--accent); }
-  #bar button:focus-visible, #bar select:focus-visible, #time:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  #time { flex: 1 1 180px; min-width: 120px; accent-color: var(--accent); }
-  #frame { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 92px; text-align: right; }
-  #help { color: var(--muted); font-size: 12px; flex-basis: 100%; }
-  #message { top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 14px 18px; text-align: center;
-    max-width: min(460px, calc(100vw - 28px)); }
-  #message:empty { display: none; }
-  .hidden { display: none !important; }
+
+  /* Frosted surface shared by every panel. */
+  .panel { position: fixed; z-index: 2; color: var(--text);
+    background: var(--glass); border: 1px solid var(--stroke); border-radius: var(--r-panel);
+    box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(22px) saturate(160%); backdrop-filter: blur(22px) saturate(160%);
+    transition: opacity .2s var(--ease), visibility .2s var(--ease); }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .panel { background: var(--glass-solid); }
+  }
+  body.ui-hidden .panel:not(#reveal) { opacity: 0; visibility: hidden; pointer-events: none; }
+
+  /* ----------------------------------------------------------- controls */
+  .icon-btn, .btn, .play { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    height: var(--control); border: 1px solid transparent; border-radius: var(--r-control);
+    background: transparent; cursor: pointer; white-space: nowrap;
+    transition: background-color .15s var(--ease), border-color .15s var(--ease); }
+  .icon-btn { width: var(--control); padding: 0; color: var(--text-2); }
+  .icon-btn:hover { background: var(--fill-hover); color: var(--text); }
+  .icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+  .btn { width: 100%; padding: 0 14px; background: var(--fill); border-color: var(--stroke); }
+  .btn:hover { background: var(--fill-hover); border-color: var(--stroke-strong); }
+  .play { width: 48px; height: 48px; flex: none; border-radius: var(--r-pill);
+    background: var(--accent); color: var(--on-accent); }
+  .play:hover { filter: brightness(1.08); }
+  svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+    stroke-linecap: round; stroke-linejoin: round; }
+  svg.solid { fill: currentColor; stroke: none; }
+  .play svg { width: 22px; height: 22px; }
+  .flip { transform: scaleX(-1); }
+
+  input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: 0;
+    background: transparent; cursor: pointer; --pct: 0%; }
+  input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px;
+    background: linear-gradient(to right, var(--accent) var(--pct), var(--track) var(--pct)); }
+  input[type="range"]::-moz-range-track { height: 6px; border-radius: 3px; background: var(--track); }
+  input[type="range"]::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--accent); }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5px;
+    border: 0; border-radius: 50%; background: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, .35); }
+  input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%;
+    background: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, .35); }
+  input[type="range"]:focus-visible { outline-offset: 4px; border-radius: 6px; }
+
+  select { height: var(--control); padding: 0 30px 0 12px; border: 1px solid var(--stroke);
+    border-radius: var(--r-control); background-color: var(--fill); cursor: pointer;
+    -webkit-appearance: none; appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: calc(100% - 16px) 17px, calc(100% - 11px) 17px;
+    background-size: 5px 5px; background-repeat: no-repeat; }
+  select:hover { background-color: var(--fill-hover); border-color: var(--stroke-strong); }
+  select option { color: #161a22; background: #fff; }
+
+  /* Radio groups drawn as chips / segmented control (native inputs underneath). */
+  .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+  .choices label { position: relative; flex: 1 1 auto; }
+  .choices input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .choices span { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px;
+    padding: 0 12px; border: 1px solid var(--stroke); border-radius: var(--r-control);
+    background: var(--fill); color: var(--text-2); white-space: nowrap;
+    transition: background-color .15s var(--ease), border-color .15s var(--ease); }
+  .choices label:hover span { background: var(--fill-hover); color: var(--text); }
+  .choices input:checked + span { background: var(--accent-soft); border-color: var(--accent); color: var(--text); font-weight: 600; }
+  .choices input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .choices small { font-size: 11px; font-weight: 500; color: var(--text-3); }
+  .segmented { flex-wrap: nowrap; gap: 0; padding: 3px; border: 1px solid var(--stroke);
+    border-radius: var(--r-control); background: var(--fill); }
+  .segmented span { min-height: 32px; border: 0; background: transparent; border-radius: 7px; }
+  .segmented input:checked + span { border: 0; background: var(--glass-solid); box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+
+  /* ------------------------------------------------------------- top bar */
+  #topbar { top: var(--edge); left: var(--edge); display: flex; align-items: center; gap: 4px;
+    max-width: calc(100vw - 2 * var(--edge)); padding: 6px 6px 6px 16px; }
+  .brand { display: flex; align-items: baseline; gap: 6px; padding-right: 12px; white-space: nowrap; }
+  .brand h1 { font-size: 15px; font-weight: 700; letter-spacing: .01em; }
+  .brand span { font-size: 13px; color: var(--text-3); }
+  #status { min-width: 0; padding: 0 12px; border-left: 1px solid var(--stroke); color: var(--text-2);
+    font-size: 13px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #status.error { color: var(--danger); white-space: normal; }
+  #loading { position: absolute; left: 16px; right: 16px; bottom: 0; height: 2px; overflow: hidden; border-radius: 2px; }
+  #loading i { display: block; width: 0; height: 100%; background: var(--accent); transition: width .2s linear; }
+
+  #reveal { top: var(--edge); left: var(--edge); padding: 4px; opacity: 0; visibility: hidden; pointer-events: none; }
+  body.ui-hidden #reveal { opacity: 1; visibility: visible; pointer-events: auto; }
+  #reveal .btn { width: auto; border: 0; background: transparent; }
+
+  /* ------------------------------------------------------------- sidebar */
+  #sidebar { top: var(--edge); right: var(--edge); width: var(--sidebar);
+    max-height: calc(100% - 2 * var(--edge)); display: flex; flex-direction: column; overflow: hidden; }
+  #sidebar > header { display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 10px 10px 18px; border-bottom: 1px solid var(--stroke); }
+  #sidebar h2 { font-size: 15px; font-weight: 650; }
+  .scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+  .group { padding: 16px 18px 18px; border-bottom: 1px solid var(--stroke); }
+  .group:last-child { border-bottom: 0; }
+  .group h3 { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650;
+    letter-spacing: .06em; text-transform: uppercase; color: var(--text-2); }
+  .group h3 b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent); font-size: 11px; letter-spacing: 0; }
+  .hint { margin: 6px 0 12px; font-size: 13px; color: var(--text-3); }
+  .field { margin-top: 14px; }
+  .field-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px;
+    font-size: 13px; color: var(--text-2); }
+  .field-head output { color: var(--text); font-variant-numeric: tabular-nums; }
+  .group .btn { margin-top: 10px; }
+
+  details.group { padding: 0; }
+  details.group > summary { display: flex; align-items: center; justify-content: space-between; min-height: 48px;
+    padding: 0 18px; cursor: pointer; list-style: none; font-size: 13px; font-weight: 600; color: var(--text-2); }
+  details.group > summary::-webkit-details-marker { display: none; }
+  details.group > summary:hover { color: var(--text); background: var(--fill); }
+  details.group > summary:focus-visible { outline-offset: -2px; }
+  details.group > summary::after { content: ""; width: 8px; height: 8px; margin-right: 4px;
+    border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+    transform: rotate(45deg) translateY(-2px); transition: transform .2s var(--ease); }
+  details.group[open] > summary::after { transform: rotate(225deg) translateY(-2px); }
+  .rows { padding: 2px 18px 16px; font-size: 13px; }
+  .rows > div { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0; }
+  .rows dt { color: var(--text-3); }
+  .rows dd { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px solid var(--stroke-strong);
+    border-radius: 6px; background: var(--fill); font: 12px/1.5 var(--font); text-align: center; color: var(--text-2); }
+
+  /* ----------------------------------------------------------- transport */
+  #transport { left: var(--edge); right: var(--edge); bottom: var(--edge);
+    display: flex; align-items: center; gap: var(--gap); padding: 10px 14px 10px 10px; }
+  body.docked #transport { right: calc(var(--edge) + var(--sidebar) + var(--gap)); }
+  .steps { display: flex; gap: 2px; }
+  .timeline { flex: 1; min-width: 120px; padding-top: 2px; }
+  .timeline-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 1px;
+    font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .timeline-meta #clock { color: var(--text); font-weight: 600; }
+  .extras { display: flex; align-items: center; gap: 6px; }
+
+  /* ----------------------------------------------------------- responsive */
+  @media (max-width: 899px) {
+    :root { --edge: 10px; }
+    #sidebar { top: auto; left: var(--edge); width: auto; max-height: min(62vh, 520px);
+      bottom: calc(var(--edge) + var(--transport-h, 76px) + var(--gap)); }
+    #transport { flex-wrap: wrap; row-gap: 4px; }
+    .timeline { order: 3; flex-basis: 100%; }
+    .extras { margin-left: auto; }
+    .brand span { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; }
+  }
 </style>
 </head>
-<body>
-<canvas id="gl" aria-label="Scena 4D"></canvas>
-<div id="info" class="panel">
-  <h1>MISTER 4D Player</h1>
-  <p id="stats">caricamento…</p>
+<body data-theme="dark">
+<canvas id="gl" aria-label="Scena 4D: trascina per ruotare, rotella per lo zoom"></canvas>
+
+<!-- 1. What is loaded -->
+<header id="topbar" class="panel">
+  <div class="brand"><h1>MISTER 4D</h1><span>Player</span></div>
+  <div id="status" role="status" aria-live="polite">Caricamento…</div>
+  <button id="togglePanel" class="icon-btn" type="button" aria-expanded="true" aria-controls="sidebar" title="Impostazioni">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M19 7h1M4 12h3M13 12h7M4 17h11M21 17h-1"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="18" cy="17" r="2.2"/></svg>
+    <span class="sr-only">Impostazioni</span>
+  </button>
+  <button id="fullscreen" class="icon-btn" type="button" aria-pressed="false" title="Schermo intero (F)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>
+    <span class="sr-only">Schermo intero</span>
+  </button>
+  <div id="loading" aria-hidden="true"><i></i></div>
+</header>
+
+<div id="reveal" class="panel">
+  <button id="showUi" class="btn" type="button">Mostra interfaccia <kbd>H</kbd></button>
 </div>
-<div id="message" class="panel" role="status"></div>
-<div id="bar" class="panel">
-  <button id="play" type="button">Pausa</button>
-  <input id="time" type="range" min="0" max="0" value="0" step="1" aria-label="Istante">
-  <span id="frame">0 / 0</span>
-  <select id="speed" aria-label="Velocità">
-    <option value="0.25">0,25×</option>
-    <option value="0.5">0,5×</option>
-    <option value="1" selected>1×</option>
-    <option value="2">2×</option>
-  </select>
-  <select id="camera" aria-label="Punto di vista"></select>
-  <button id="background" type="button">Sfondo</button>
-  <span id="help">Trascina: ruota · Rotella: zoom · Shift + trascina o tasto destro: sposta · Spazio: play/pausa</span>
-</div>
+
+<!-- 2. Play it -->
+<footer id="transport" class="panel" aria-label="Riproduzione">
+  <button id="play" class="play" type="button" title="Riproduci / Pausa (Spazio)">
+    <svg id="iconPause" class="solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>
+    <svg id="iconPlay" class="solid" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M8.5 5.2v13.6a.8.8 0 0 0 1.2.7l11-6.8a.8.8 0 0 0 0-1.4l-11-6.8a.8.8 0 0 0-1.2.7z"/></svg>
+    <span id="playLabel" class="sr-only">Pausa</span>
+  </button>
+  <div class="steps">
+    <button id="prev" class="icon-btn" type="button" title="Frame precedente (←)">
+      <svg class="solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2.2v14H6zM19 6.3v11.4a.7.7 0 0 1-1.1.6l-8.3-5.7a.7.7 0 0 1 0-1.2l8.3-5.7a.7.7 0 0 1 1.1.6z"/></svg>
+      <span class="sr-only">Frame precedente</span>
+    </button>
+    <button id="next" class="icon-btn" type="button" title="Frame successivo (→)">
+      <svg class="solid flip" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2.2v14H6zM19 6.3v11.4a.7.7 0 0 1-1.1.6l-8.3-5.7a.7.7 0 0 1 0-1.2l8.3-5.7a.7.7 0 0 1 1.1.6z"/></svg>
+      <span class="sr-only">Frame successivo</span>
+    </button>
+  </div>
+  <div class="timeline">
+    <input id="time" type="range" min="0" max="0" value="0" step="1" aria-label="Posizione nella clip">
+    <div class="timeline-meta"><span id="clock">0,00 s</span><span id="frame">frame 1 di 1</span><span id="duration">0,00 s</span></div>
+  </div>
+  <div class="extras">
+    <label><span class="sr-only">Velocità di riproduzione</span>
+      <select id="speed" title="Velocità di riproduzione">
+        <option value="0.1">0,1×</option>
+        <option value="0.25">0,25×</option>
+        <option value="0.5">0,5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+      </select>
+    </label>
+    <button id="loop" class="icon-btn" type="button" aria-pressed="true" title="Ripeti in continuo">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 3.5l3.5 3.5-3.5 3.5M4 11.5V10a3 3 0 0 1 3-3h13M7.500 20.500L4 17l3.500-3.500M20 12.500V14a3 3 0 0 1-3 3H4"/></svg>
+      <span class="sr-only">Ripeti in continuo</span>
+    </button>
+  </div>
+</footer>
+
+<!-- 3. Choose how to look at it; reference material stays folded away -->
+<aside id="sidebar" class="panel" aria-label="Impostazioni">
+  <header>
+    <h2>Impostazioni</h2>
+    <button id="closePanel" class="icon-btn" type="button" title="Chiudi">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      <span class="sr-only">Chiudi il pannello</span>
+    </button>
+  </header>
+  <div class="scroll">
+    <section class="group" aria-labelledby="h-view">
+      <h3 id="h-view"><b>1</b>Punto di vista</h3>
+      <p class="hint">Guarda da una camera del set o muoviti liberamente.</p>
+      <div id="cameras" class="choices" role="radiogroup" aria-labelledby="h-view"></div>
+      <button id="resetView" class="btn" type="button">Reimposta vista</button>
+    </section>
+
+    <section class="group" aria-labelledby="h-look">
+      <h3 id="h-look"><b>2</b>Aspetto</h3>
+      <div class="field">
+        <div class="field-head"><span id="l-bg">Sfondo</span></div>
+        <div class="choices segmented" role="radiogroup" aria-labelledby="l-bg">
+          <label><input type="radio" name="background" value="dark" checked><span>Scuro</span></label>
+          <label><input type="radio" name="background" value="light"><span>Chiaro</span></label>
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-head"><label for="splat">Dimensione degli splat</label><output id="splatValue" for="splat">100%</output></div>
+        <input id="splat" type="range" min="20" max="150" step="5" value="100">
+      </div>
+    </section>
+
+    <details class="group">
+      <summary>Dettagli della scena</summary>
+      <dl class="rows">
+        <div><dt>Gaussiane nel frame</dt><dd id="d-count">–</dd></div>
+        <div><dt>Frame</dt><dd id="d-frames">–</dd></div>
+        <div><dt>Cadenza</dt><dd id="d-fps">–</dd></div>
+        <div><dt>Durata</dt><dd id="d-duration">–</dd></div>
+        <div><dt>Ingombro</dt><dd id="d-size">–</dd></div>
+        <div><dt>Camere</dt><dd id="d-cameras">–</dd></div>
+        <div><dt>Rendering</dt><dd id="d-render">–</dd></div>
+      </dl>
+    </details>
+
+    <details class="group">
+      <summary>Comandi</summary>
+      <dl class="rows">
+        <div><dt>Ruota</dt><dd>trascina</dd></div>
+        <div><dt>Zoom</dt><dd>rotella o pizzico</dd></div>
+        <div><dt>Sposta</dt><dd><kbd>Shift</kbd> + trascina</dd></div>
+        <div><dt>Riproduci / pausa</dt><dd><kbd>Spazio</kbd></dd></div>
+        <div><dt>Frame precedente / successivo</dt><dd><kbd>←</kbd> <kbd>→</kbd></dd></div>
+        <div><dt>Primo / ultimo frame</dt><dd><kbd>Home</kbd> <kbd>Fine</kbd></dd></div>
+        <div><dt>Reimposta vista</dt><dd><kbd>R</kbd></dd></div>
+        <div><dt>Schermo intero</dt><dd><kbd>F</kbd></dd></div>
+        <div><dt>Nascondi interfaccia</dt><dd><kbd>H</kbd></dd></div>
+      </dl>
+    </details>
+  </div>
+</aside>
+
 <script src="viewer.js"></script>
 </body>
 </html>

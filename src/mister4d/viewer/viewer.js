@@ -1,5 +1,5 @@
 // MISTER 4D Player: a small WebGL2 renderer for baked dynamic Gaussian scenes.
-// No dependencies. Scene format: see mister4d/export.py (export_web).
+// No dependencies. Scene format: see mister4d/export.py.
 'use strict';
 
 const VERTEX = `#version 300 es
@@ -16,6 +16,7 @@ uniform int uTexWidth;
 uniform vec3 uBoxMin;
 uniform vec3 uBoxSize;
 uniform vec2 uLogScale;
+uniform float uSplatScale;
 uniform mat4 uView;     // world -> camera, camera looks along +z, y down
 uniform vec2 uFocal;    // pixels
 uniform vec2 uCenter;   // principal point, pixels
@@ -38,7 +39,7 @@ void main() {
     1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + w * z), 2.0 * (x * z - w * y),
     2.0 * (x * y - w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + w * x),
     2.0 * (x * z + w * y), 2.0 * (y * z - w * x), 1.0 - 2.0 * (x * x + y * y));
-  vec3 s = exp(mix(vec3(uLogScale.x), vec3(uLogScale.y), texelFetch(uScale, uv, 0).rgb));
+  vec3 s = uSplatScale * exp(mix(vec3(uLogScale.x), vec3(uLogScale.y), texelFetch(uScale, uv, 0).rgb));
   mat3 M = R * mat3(s.x, 0.0, 0.0, 0.0, s.y, 0.0, 0.0, 0.0, s.z);
   mat3 sigma = M * transpose(M);
 
@@ -79,16 +80,20 @@ void main() {
 const $ = (id) => document.getElementById(id);
 const canvas = $('gl');
 const gl = canvas.getContext('webgl2', { alpha: false, antialias: false });
+const wide = window.matchMedia('(min-width: 900px)');
 
 const state = {
   scene: null, base: '', embedded: false, frames: [], loaded: 0,
-  frame: 0, shown: -1, clock: 0, playing: true, speed: 1,
-  az: 0, el: 0.15, dist: 3, target: [0, 0, 0], fovY: 40 * Math.PI / 180,
-  preset: null, dirty: true, light: false, lastTime: 0, fps: 0,
+  frame: 0, shown: -1, clock: 0, playing: true, speed: 1, loop: true,
+  az: 0, el: 0.15, dist: 3, target: [0, 0, 0], fovY: 40 * Math.PI / 180, home: null,
+  preset: null, dirty: true, light: false, splatScale: 1, lastTime: 0, fps: 0, statsAt: 0,
 };
 let program, uniforms, textures, indexBuffer, order, depth, keys, counts;
 
-function fail(text) { $('message').textContent = text; }
+const number = (value, digits = 0) => value.toLocaleString('it-IT',
+  { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+// ------------------------------------------------------------------- GL ---
 
 function compile(type, source) {
   const shader = gl.createShader(type);
@@ -98,7 +103,7 @@ function compile(type, source) {
   return shader;
 }
 
-function dataTexture(unit, internal, format, type, data) {
+function dataTexture(unit, internal, format, type) {
   const { tex_width: w, tex_height: h } = state.scene;
   const tex = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0 + unit);
@@ -107,7 +112,7 @@ function dataTexture(unit, internal, format, type, data) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texImage2D(gl.TEXTURE_2D, 0, internal, w, h, 0, format, type, data);
+  gl.texImage2D(gl.TEXTURE_2D, 0, internal, w, h, 0, format, type, null);
   return { tex, unit, format, type };
 }
 
@@ -127,7 +132,7 @@ function initGL() {
   gl.useProgram(program);
   uniforms = {};
   for (const name of ['uPos', 'uRot', 'uScale', 'uColor', 'uTexWidth', 'uBoxMin', 'uBoxSize',
-    'uLogScale', 'uView', 'uFocal', 'uCenter', 'uViewport']) {
+    'uLogScale', 'uSplatScale', 'uView', 'uFocal', 'uCenter', 'uViewport']) {
     uniforms[name] = gl.getUniformLocation(program, name);
   }
   const quad = gl.createBuffer();
@@ -156,10 +161,10 @@ function setupScene() {
   gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
   gl.bufferData(gl.ARRAY_BUFFER, order.byteLength, gl.DYNAMIC_DRAW);
   textures = {
-    pos: dataTexture(0, gl.RGB16UI, gl.RGB_INTEGER, gl.UNSIGNED_SHORT, null),
-    rot: dataTexture(1, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, null),
-    scale: dataTexture(2, gl.RGB8, gl.RGB, gl.UNSIGNED_BYTE, null),
-    color: dataTexture(3, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, null),
+    pos: dataTexture(0, gl.RGB16UI, gl.RGB_INTEGER, gl.UNSIGNED_SHORT),
+    rot: dataTexture(1, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE),
+    scale: dataTexture(2, gl.RGB8, gl.RGB, gl.UNSIGNED_BYTE),
+    color: dataTexture(3, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE),
   };
   gl.uniform1i(uniforms.uPos, 0);
   gl.uniform1i(uniforms.uRot, 1);
@@ -171,7 +176,7 @@ function setupScene() {
   gl.uniform2f(uniforms.uLogScale, s.log_scale_min, s.log_scale_max);
 }
 
-// ---------------------------------------------------------------- camera ---
+// --------------------------------------------------------------- camera ---
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -185,16 +190,21 @@ function orbitEye() {
     target[2] + dist * Math.sin(el)];
 }
 
-// Height (canvas pixels) of the part of the canvas not covered by the control bar.
-function freeHeight() {
-  const scale = canvas.height / Math.max(canvas.clientHeight, 1);
-  return Math.max(120, ($('bar').getBoundingClientRect().top - 8) * scale);
+// Part of the canvas (canvas pixels) not covered by the docked panels: the
+// subject is framed there, so opening a panel never hides it.
+function stage() {
+  const k = canvas.width / Math.max(canvas.clientWidth, 1);
+  let right = canvas.clientWidth, bottom = canvas.clientHeight;
+  if (!document.body.classList.contains('ui-hidden')) {
+    if (!$('transport').hidden) bottom = $('transport').getBoundingClientRect().top - 8;
+    if (document.body.classList.contains('docked')) right = $('sidebar').getBoundingClientRect().left - 8;
+  }
+  return { w: Math.max(160, right) * k, h: Math.max(120, bottom) * k };
 }
 
-// Returns the world->camera matrix (row-major 3x4) plus focal and principal point in pixels.
-// The image is centred in the area above the control bar.
+// World->camera matrix (row-major 3x4), focal length and principal point in pixels.
 function currentCamera() {
-  const W = canvas.width, H = freeHeight();
+  const { w: W, h: H } = stage();
   if (state.preset) {
     const c = state.preset;
     const k = Math.min(W / c.width, H / c.height);
@@ -215,10 +225,10 @@ function currentCamera() {
   };
 }
 
+// Leave a rig camera and keep orbiting from where it stands.
 function leavePreset() {
   if (!state.preset) return;
   const c = state.preset;
-  // Continue orbiting from where the preset camera stands.
   const eye = [0, 1, 2].map((i) => -(c.R[0][i] * c.t[0] + c.R[1][i] * c.t[1] + c.R[2][i] * c.t[2]));
   const d = sub(eye, state.target);
   state.dist = Math.hypot(...d);
@@ -226,10 +236,23 @@ function leavePreset() {
   state.el = Math.asin(Math.max(-1, Math.min(1, d[2] / state.dist)));
   state.fovY = 2 * Math.atan(c.height / (2 * c.K[1][1]));
   state.preset = null;
-  $('camera').value = '';
+  const free = document.querySelector('input[name="camera"][value=""]');
+  if (free) free.checked = true;
 }
 
-// ---------------------------------------------------------------- render ---
+// Free view from the direction of the first training camera (the best
+// constrained one), aimed at the subject and far enough to see all of it.
+function homeView() {
+  const s = state.scene;
+  state.target = s.bbox_min.map((v, i) => (v + s.bbox_max[i]) / 2);
+  const first = s.cameras.find((c) => !c.holdout) || s.cameras[0];
+  if (first) { state.preset = first; leavePreset(); }
+  const radius = 0.5 * Math.hypot(...s.bbox_max.map((v, i) => v - s.bbox_min[i]));
+  state.dist = Math.max(0.3, 1.05 * radius / Math.sin(state.fovY / 2));
+  state.dirty = true;
+}
+
+// --------------------------------------------------------------- render ---
 
 function sortBackToFront(pos, n, row) {
   const s = state.scene;
@@ -275,9 +298,15 @@ function draw(now) {
   if (dt > 0) state.fps = state.fps * 0.9 + (1 / dt) * 0.1;
 
   if (state.playing && s.num_frames > 1) {
-    state.clock += dt * state.speed * s.fps;
-    const next = Math.floor(state.clock) % s.num_frames;
-    if (state.frames[next]) state.frame = next; else state.clock -= dt * state.speed * s.fps;  // buffering
+    let clock = state.clock + dt * state.speed * s.fps;
+    if (clock >= s.num_frames) {
+      if (state.loop) clock %= s.num_frames;
+      else { clock = s.num_frames - 1; setPlaying(false); }
+    }
+    if (state.frames[Math.floor(clock)]) {  // otherwise wait: that frame is still loading
+      state.clock = clock;
+      state.frame = Math.floor(clock);
+    }
   }
   const data = state.frames[state.frame];
   if (!data) return;
@@ -289,8 +318,7 @@ function draw(now) {
     updateTexture(textures.color, data.color);
     state.shown = state.frame;
     state.dirty = true;
-    $('time').value = state.frame;
-    $('frame').textContent = `${state.frame + 1} / ${s.num_frames}`;
+    syncTimeline();
   }
   const cam = currentCamera();
   const count = s.counts[state.frame];
@@ -306,23 +334,26 @@ function draw(now) {
   gl.uniform2fv(uniforms.uFocal, cam.focal);
   gl.uniform2fv(uniforms.uCenter, cam.center);
   gl.uniform2f(uniforms.uViewport, canvas.width, canvas.height);
+  gl.uniform1f(uniforms.uSplatScale, state.splatScale);
   gl.viewport(0, 0, canvas.width, canvas.height);
-  const bg = state.light ? 0.93 : 0.07;
-  gl.clearColor(bg, bg, bg * 1.04, 1);
+  if (state.light) gl.clearColor(0.93, 0.94, 0.96, 1); else gl.clearColor(0.045, 0.047, 0.063, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
   gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
-  $('stats').textContent = `${count.toLocaleString('it-IT')} gaussiane · ${s.num_frames} frame a ` +
-    `${s.fps.toFixed(1)} fps · ${Math.round(state.fps)} fps di rendering` +
-    (state.loaded < s.num_frames ? ` · caricati ${state.loaded}/${s.num_frames}` : '');
+
+  if (now - state.statsAt > 500) {  // the details panel does not need 60 updates a second
+    state.statsAt = now;
+    $('d-count').textContent = number(count);
+    $('d-render').textContent = `${Math.round(state.fps)} fps`;
+  }
 }
 
-// ------------------------------------------------------------------ data ---
+// ----------------------------------------------------------------- data ---
 
 // A single-file export carries the frames inside the page, base64-encoded in
 // <script type="application/octet-stream"> elements: nothing is downloaded, so
 // the file opens with a double click (browsers block fetch() on file://).
 function embeddedFrame(i) {
-  const node = document.getElementById(`mister4d-frame-${i}`);
+  const node = $(`mister4d-frame-${i}`);
   const text = atob(node.textContent);
   node.remove();  // free the encoded copy
   const bytes = new Uint8Array(text.length);
@@ -353,53 +384,205 @@ async function loadFrames() {
         color: new Uint8Array(buffer, slots * 13, slots * 4),
       };
       state.loaded++;
+      showLoading();
     }
   }
   await Promise.all([worker(), worker(), worker(), worker()]);
 }
 
-function setupControls() {
+// ------------------------------------------------------------ interface ---
+
+function showLoading() {
   const s = state.scene;
-  $('time').max = s.num_frames - 1;
-  if (s.num_frames <= 1) for (const id of ['play', 'time', 'frame', 'speed']) $(id).classList.add('hidden');
+  const done = state.loaded >= s.num_frames;
+  $('loading').hidden = done;
+  $('loading').firstElementChild.style.width = `${100 * state.loaded / s.num_frames}%`;
+  $('status').textContent = done
+    ? (s.num_frames > 1
+      ? `${s.num_frames} frame · ${number(s.fps, s.fps % 1 ? 2 : 0)} fps · ${number(s.num_frames / s.fps, 2)} s`
+      : 'Scena statica')
+    : `Caricamento ${state.loaded} di ${s.num_frames} frame`;
+}
 
-  const togglePlay = () => {
-    state.playing = !state.playing;
-    $('play').textContent = state.playing ? 'Pausa' : 'Play';
+function fail(text) {
+  $('loading').hidden = true;
+  $('status').textContent = text;
+  $('status').classList.add('error');
+  $('status').setAttribute('role', 'alert');
+}
+
+function setPlaying(playing) {
+  state.playing = playing;
+  $('iconPlay').toggleAttribute('hidden', playing);
+  $('iconPause').toggleAttribute('hidden', !playing);
+  $('playLabel').textContent = playing ? 'Pausa' : 'Riproduci';
+}
+
+function seek(frame) {
+  const s = state.scene;
+  const f = Math.max(0, Math.min(s.num_frames - 1, frame));
+  if (state.frames[f]) { state.frame = f; state.clock = f; }
+}
+
+function step(delta) { setPlaying(false); seek(state.frame + delta); }
+
+function syncTimeline() {
+  const s = state.scene;
+  const last = Math.max(s.num_frames - 1, 1);
+  $('time').value = state.frame;
+  $('time').style.setProperty('--pct', `${100 * state.frame / last}%`);
+  $('time').setAttribute('aria-valuetext', `frame ${state.frame + 1} di ${s.num_frames}`);
+  $('clock').textContent = `${number(state.frame / s.fps, 2)} s`;
+  $('frame').textContent = `frame ${state.frame + 1} di ${s.num_frames}`;
+}
+
+function setPanel(open) {
+  $('sidebar').hidden = !open;
+  $('togglePanel').setAttribute('aria-expanded', String(open));
+  document.body.classList.toggle('docked', open && wide.matches);
+  state.dirty = true;
+}
+
+function setTheme(light) {
+  state.light = light;
+  document.body.dataset.theme = light ? 'light' : 'dark';
+}
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+}
+
+function fillDetails() {
+  const s = state.scene;
+  const size = s.bbox_max.map((v, i) => number(v - s.bbox_min[i], 2));
+  const held = s.cameras.filter((c) => c.holdout).length;
+  $('d-frames').textContent = number(s.num_frames);
+  $('d-fps').textContent = `${number(s.fps, s.fps % 1 ? 2 : 0)} fps`;
+  $('d-duration').textContent = `${number(s.num_frames / s.fps, 2)} s`;
+  $('d-size').textContent = `${size.join(' × ')} m`;
+  $('d-cameras').textContent = held ? `${s.cameras.length - held} + ${held} di verifica` : number(s.cameras.length);
+}
+
+function buildCameraChoices() {
+  const group = $('cameras');
+  const add = (value, label, note) => {
+    const el = document.createElement('label');
+    const input = Object.assign(document.createElement('input'), { type: 'radio', name: 'camera', value });
+    const text = document.createElement('span');
+    text.textContent = label;
+    if (note) text.appendChild(Object.assign(document.createElement('small'), { textContent: note }));
+    el.append(input, text);
+    group.appendChild(el);
+    return input;
   };
-  $('play').addEventListener('click', togglePlay);
-  $('time').addEventListener('input', (e) => {
-    const f = Number(e.target.value);
-    if (state.frames[f]) { state.frame = f; state.clock = f; }
-  });
-  $('speed').addEventListener('change', (e) => { state.speed = Number(e.target.value); });
-  $('background').addEventListener('click', () => { state.light = !state.light; });
-  window.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' && e.target.tagName !== 'SELECT') { e.preventDefault(); togglePlay(); }
-  });
-
-  const select = $('camera');
-  select.add(new Option('Vista libera', ''));
-  for (const c of s.cameras) select.add(new Option(c.holdout ? `${c.name} (esclusa dal training)` : c.name, c.name));
-  select.addEventListener('change', () => {
-    state.preset = s.cameras.find((c) => c.name === select.value) || null;
+  add('', 'Libera').checked = true;
+  for (const c of state.scene.cameras) {
+    const input = add(c.name, c.name, c.holdout ? 'verifica' : '');
+    input.parentElement.title = c.holdout
+      ? 'Camera esclusa dal training: mostra come regge un punto di vista mai visto'
+      : 'Camera usata per il training';
+  }
+  group.addEventListener('change', (e) => {
+    const cam = state.scene.cameras.find((c) => c.name === e.target.value);
+    if (cam) state.preset = cam; else leavePreset();
     state.dirty = true;
   });
+}
 
-  let drag = null;
+function setupControls() {
+  const s = state.scene;
+
+  // Transport: only for scenes that actually move.
+  $('transport').hidden = s.num_frames <= 1;
+  $('time').max = s.num_frames - 1;
+  $('duration').textContent = `${number(s.num_frames / s.fps, 2)} s`;
+  $('play').addEventListener('click', () => {
+    if (!state.playing && !state.loop && state.frame >= s.num_frames - 1) seek(0);
+    setPlaying(!state.playing);
+  });
+  $('prev').addEventListener('click', () => step(-1));
+  $('next').addEventListener('click', () => step(1));
+  $('time').addEventListener('input', (e) => seek(Number(e.target.value)));
+  $('speed').addEventListener('change', (e) => { state.speed = Number(e.target.value); });
+  $('loop').addEventListener('click', () => {
+    state.loop = !state.loop;
+    $('loop').setAttribute('aria-pressed', String(state.loop));
+  });
+
+  // Point of view and appearance.
+  buildCameraChoices();
+  $('resetView').addEventListener('click', homeView);
+  for (const input of document.querySelectorAll('input[name="background"]')) {
+    input.addEventListener('change', () => setTheme(input.value === 'light'));
+  }
+  $('splat').addEventListener('input', (e) => {
+    state.splatScale = Number(e.target.value) / 100;
+    $('splatValue').textContent = `${e.target.value}%`;
+    e.target.style.setProperty('--pct', `${100 * (e.target.value - e.target.min) / (e.target.max - e.target.min)}%`);
+  });
+  $('splat').dispatchEvent(new Event('input'));
+  fillDetails();
+
+  // Panels.
+  $('togglePanel').addEventListener('click', () => setPanel($('sidebar').hidden));
+  $('closePanel').addEventListener('click', () => { setPanel(false); $('togglePanel').focus(); });
+  wide.addEventListener('change', () => setPanel(!$('sidebar').hidden));
+  setPanel(wide.matches);
+  $('fullscreen').addEventListener('click', toggleFullscreen);
+  document.addEventListener('fullscreenchange', () => {
+    $('fullscreen').setAttribute('aria-pressed', String(Boolean(document.fullscreenElement)));
+  });
+  const toggleUi = () => { document.body.classList.toggle('ui-hidden'); state.dirty = true; };
+  $('showUi').addEventListener('click', toggleUi);
+  new ResizeObserver(() => {
+    document.documentElement.style.setProperty('--transport-h', `${$('transport').offsetHeight}px`);
+    state.dirty = true;
+  }).observe($('transport'));
+
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = e.target.tagName;
+    const typing = tag === 'INPUT' || tag === 'SELECT' || tag === 'SUMMARY';
+    if (e.code === 'Space' && !typing && tag !== 'BUTTON') { e.preventDefault(); $('play').click(); return; }
+    if (typing) return;  // arrows and letters belong to the focused control
+    const actions = {
+      ArrowLeft: () => step(-1), ArrowRight: () => step(1),
+      Home: () => step(-state.frame), End: () => step(s.num_frames),
+      KeyR: homeView, KeyF: toggleFullscreen, KeyH: toggleUi,
+    };
+    if (actions[e.code]) { e.preventDefault(); actions[e.code](); }
+  });
+
+  // Mouse, pen and touch on the scene: drag to orbit, shift/right drag to pan,
+  // wheel or pinch to zoom.
+  const pointers = new Map();
+  let pinch = 0;
+  const zoom = (factor) => {
+    leavePreset();
+    state.dist = Math.max(0.2, Math.min(50, state.dist * factor));
+    state.dirty = true;
+  };
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => {
     leavePreset();
-    drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey };
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey });
     canvas.setPointerCapture(e.pointerId);
     canvas.classList.add('dragging');
+    pinch = 0;
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (!drag) return;
-    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    drag.x = e.clientX;
-    drag.y = e.clientY;
-    if (drag.pan) {
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    p.x = e.clientX;
+    p.y = e.clientY;
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const spread = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinch > 0 && spread > 0) zoom(pinch / spread);
+      pinch = spread;
+    } else if (p.pan) {
       const cam = currentCamera();
       const k = state.dist / cam.focal[1] * (canvas.height / canvas.clientHeight);
       for (let i = 0; i < 3; i++) state.target[i] -= (cam.rows[0][i] * dx + cam.rows[1][i] * dy) * k;
@@ -409,38 +592,34 @@ function setupControls() {
     }
     state.dirty = true;
   });
-  const release = () => { drag = null; canvas.classList.remove('dragging'); };
+  const release = (e) => {
+    pointers.delete(e.pointerId);
+    pinch = 0;
+    if (!pointers.size) canvas.classList.remove('dragging');
+  };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
-  canvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    leavePreset();
-    state.dist = Math.max(0.2, Math.min(50, state.dist * Math.exp(e.deltaY * 0.001)));
-    state.dirty = true;
-  }, { passive: false });
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoom(Math.exp(e.deltaY * 0.001)); },
+    { passive: false });
   window.addEventListener('resize', () => { state.dirty = true; });
 }
 
 async function main() {
-  if (!gl) return fail('Questo browser non supporta WebGL2.');
+  if (!gl) return fail('Questo browser non supporta WebGL2: prova con una versione recente di Chrome, Edge o Firefox.');
   const url = new URLSearchParams(location.search).get('scene') || 'scene.json';
   state.base = url.includes('/') ? url.slice(0, url.lastIndexOf('/') + 1) : '';
-  const embedded = document.getElementById('mister4d-scene');
+  const embedded = $('mister4d-scene');
   state.embedded = Boolean(embedded);
   try {
     state.scene = embedded ? JSON.parse(embedded.textContent) : await (await fetch(url)).json();
     const s = state.scene;
-    if (s.format !== 'mister4d-web' || s.version !== 2) throw new Error('scene.json non è un export mister4d v2');
+    if (s.format !== 'mister4d-web' || s.version !== 2) throw new Error('il file non è un export mister4d (versione 2)');
     initGL();
     setupScene();
-    // Start from the direction of the first training camera (the best constrained
-    // point of view), aimed at the subject and far enough to see all of it.
-    state.target = s.bbox_min.map((v, i) => (v + s.bbox_max[i]) / 2);
-    const first = s.cameras.find((c) => !c.holdout) || s.cameras[0];
-    if (first) { state.preset = first; leavePreset(); }
-    const radius = 0.5 * Math.hypot(...s.bbox_max.map((v, i) => v - s.bbox_min[i]));
-    state.dist = Math.max(0.3, 1.05 * radius / Math.sin(state.fovY / 2));
     setupControls();
+    homeView();
+    showLoading();
+    syncTimeline();
     requestAnimationFrame(draw);
     await loadFrames();
   } catch (err) {
@@ -452,8 +631,11 @@ async function main() {
 // Small hook for automated tests and for driving the player from the console.
 window.mister4d = {
   state,
-  setFrame(i) { state.playing = false; $('play').textContent = 'Play'; state.frame = i; state.clock = i; },
-  setCamera(name) { $('camera').value = name || ''; $('camera').dispatchEvent(new Event('change')); },
+  setFrame(i) { setPlaying(false); seek(i); },
+  setCamera(name) {
+    const input = document.querySelector(`input[name="camera"][value="${name || ''}"]`);
+    if (input) { input.checked = true; input.dispatchEvent(new Event('change', { bubbles: true })); }
+  },
 };
 
 main();
