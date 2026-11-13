@@ -90,6 +90,20 @@ def test_evaluate_render_and_export(tiny_dataset, tmp_path):
     assert "element vertex" in header and "property float rot_3" in header
 
 
+@pytest.mark.slow
+def test_time_offsets_are_learned_stored_and_used(tiny_dataset, tmp_path):
+    run = tmp_path / "run"
+    train(tiny_dataset, run, TrainConfig(devices="cpu", learn_time_offsets=True, **FAST))
+    _, ckpt = load_checkpoint(run / "ckpt.pt")
+    offsets = ckpt["meta"]["time_offsets"]
+    assert list(offsets) == ["cam01", "cam02", "cam03"] and offsets["cam01"] == 0.0  # the reference
+    assert all(abs(v) < 1.0 for v in offsets.values())
+    assert any(v != 0.0 for v in offsets.values())
+    assert ckpt["meta"]["coverage"]["largest_gap_deg"] > 0
+    summary = evaluate_run(run, log=quiet)
+    assert summary["train"]["flicker"] is not None and "coverage" in (run / "eval" / "summary.md").read_text()
+
+
 def test_static_mode_and_config_overrides(tiny_dataset, tmp_path):
     cfg = load_config(None, ["static=true", "iterations=8", "holdout=cam04", "devices=cpu",
                              "densify=false", "log_every=4"])

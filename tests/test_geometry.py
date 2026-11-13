@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from mister4d.camera import Camera, Rig, look_at, rig_center_and_up, rodrigues
+from mister4d.camera import Camera, Rig, look_at, rig_center_and_up, rodrigues, silhouette_coverage
 from mister4d.prepare import Rectifier
 
 
@@ -69,3 +69,28 @@ def test_vertical_from_rig_ignores_camera_pitch():
     assert mode == "landscape"
     assert np.allclose(up, [0, 0, 1], atol=1e-6)
     assert np.allclose(center, [0, 0, 1.0], atol=1e-6)
+
+
+def _ring(azimuths_deg):
+    cams = []
+    for i, az in enumerate(np.radians(azimuths_deg)):
+        R, t = look_at([3 * np.cos(az), 3 * np.sin(az), 1.4], [0, 0, 1.0])
+        cams.append(Camera(f"cam{i + 1:02d}", 10, 10, np.eye(3), R=R, t=t))
+    return cams
+
+
+def test_coverage_predicts_how_much_wider_the_hull_can_be():
+    target = [0, 0, 1.0]
+    # Three lines of sight 60 degrees apart: a round limb becomes a regular hexagon.
+    cov = silhouette_coverage(_ring([0, 60, 120]), target)
+    assert cov["largest_gap_deg"] == 60 and abs(cov["widening"] - 1 / np.cos(np.radians(30))) < 1e-3
+    # The demo rig without its second camera: the hole is where that camera was.
+    cov = silhouette_coverage(_ring([-75, 25, 75]), target)
+    assert cov["largest_gap_deg"] == 100 and cov["between"] == ["cam01", "cam02"]
+    assert abs(cov["widening"] - 1.556) < 2e-3
+    assert abs(silhouette_coverage(_ring([-75, -25, 25, 75]), target)["widening"] - 1.103) < 2e-3
+    # Cameras facing each other see the same outline: eight every 45 degrees are four lines of sight.
+    assert silhouette_coverage(_ring(range(0, 360, 45)), target)["largest_gap_deg"] == 45
+    assert silhouette_coverage(_ring(range(0, 360, 40)), target)["largest_gap_deg"] == 20
+    # Two cameras face to face leave everything across their common line of sight open.
+    assert silhouette_coverage(_ring([0, 180]), target)["largest_gap_deg"] == 180

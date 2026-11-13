@@ -17,3 +17,7 @@ iterations: -1
 sh_degree: 0
 
 max_gaussians: 2000000
+
+# Cameras without hardware trigger / genlock: also learn, per camera, the
+# sub-frame time offset left after 'ingest' aligned them to the nearest frame.
+learn_time_offsets: false

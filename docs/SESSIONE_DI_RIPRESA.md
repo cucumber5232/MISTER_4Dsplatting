@@ -98,6 +98,13 @@ solo allineare i file al frame più vicino e dire quanto errore resta.
 Dopo l'evento di sync usare `--start N` per scartare i primi frame (battito di
 mani, flash, ingresso del soggetto).
 
+L'errore che resta sotto il frame si può recuperare in fase di training con
+`--set learn_time_offsets=true`: la scena è continua nel tempo e il training
+stima per ogni camera di quanto ha esposto prima o dopo la camera di
+riferimento. Non sostituisce il sync hardware (lo scarto viene stimato, non
+misurato, e serve che il soggetto si muova), ma riduce l'errore con camere che
+ne sono prive.
+
 Che cosa controllare nell'output di `ingest` (e in `ingest.json`):
 
 - `dropped frame`: un frame mancante **non viene rinumerato**; quell'istante
@@ -107,6 +114,21 @@ Che cosa controllare nell'output di `ingest` (e in `ingest.json`):
   arrivare a ±16 ms. Per gesti rapidi serve la sincronizzazione hardware;
 - `weak sync peak`: l'evento di sync non è chiaro, verificare a occhio;
 - frame rate o risoluzione diversi tra camere.
+
+## Dove mettere le camere
+
+Conta come sono distribuite le **linee di vista**, più del numero: ogni camera
+vincola la forma solo di traverso alla propria direzione, e due camere una di
+fronte all'altra vedono la stessa sagoma. Dopo la calibrazione, `calibrate`
+stampa l'angolo più grande rimasto scoperto e di quanto il soggetto può
+apparire più largo guardandolo da lì. Regole pratiche:
+
+- distribuire le linee di vista su 180°, evitando coppie esattamente opposte
+  (8 camere ogni 45° valgono 4 linee di vista; 9 ogni 40° ne valgono 9);
+- con poche camere, tenerle vicine tra loro attorno al lato che interessa:
+  3 camere a 30–40° l'una dall'altra coprono bene un settore, 3 camere a 90°
+  lasciano forme molto incerte;
+- alzare e sfalsare alcune camere aggiunge linee di vista diverse.
 
 ## Quante camere
 

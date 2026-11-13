@@ -24,7 +24,8 @@ from scipy.optimize import least_squares
 from scipy.sparse import lil_matrix
 from scipy.spatial.transform import Rotation
 
-from .camera import Camera, Rig, distort_normalized, rig_center_and_up, rodrigues
+from .camera import (Camera, Rig, describe_coverage, distort_normalized, rig_center_and_up, rodrigues,
+                     silhouette_coverage)
 
 MIN_CORNERS = 6
 
@@ -406,7 +407,9 @@ def calibrate_rig(frames_dir: str | Path, spec: BoardSpec, reference: str | None
         K, dist = intr[c]
         info[c].update({k: round(v, 4) if isinstance(v, float) else v for k, v in stats.get(c, {}).items()})
         cameras[c] = Camera(c, sizes[c][0], sizes[c][1], K, dist, T[:3, :3], T[:3, 3], info=info[c])
+    coverage = silhouette_coverage(list(cameras.values()), volume["center"])
+    log(f"[calibrate] coverage: {describe_coverage(coverage)}")
     report = {"board": spec.to_dict(), "reference_camera": reference, "world_mode": mode,
-              "rms_px": round(rms, 4), "shared_frames": links,
+              "rms_px": round(rms, 4), "shared_frames": links, "coverage": coverage,
               "opencv_version": cv2.__version__}
     return Rig(cameras, volume=volume, undistorted=False, report=report)

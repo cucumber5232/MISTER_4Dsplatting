@@ -34,8 +34,47 @@ from .rasterizer import ALPHA_MIN, eval_sh, num_sh_bases, rgb_to_sh0
 MIN_DURATION = 0.35  # frames; shorter lives would alias between frames
 
 
+def estimate_velocities(xyz: np.ndarray, frames: np.ndarray, smooth: int = 8) -> np.ndarray:
+    """Initial velocity (metres per frame) of every point from the motion of the point clouds.
+
+    Each frame has its own points, sampled independently on the surface of
+    that instant. The displacement to the nearest point of the next and of the
+    previous frame tells how the surface moved there, along its normal: exactly
+    the component that makes Gaussians of neighbouring frames line up instead
+    of leaving a ghost. Displacements no larger than the sampling distance are
+    noise and count as "not moving".
+    """
+    from scipy.spatial import cKDTree
+
+    xyz = np.asarray(xyz, dtype=np.float64)
+    velocities = np.zeros_like(xyz)
+    ids = np.unique(frames)
+    clouds = {f: xyz[frames == f] for f in ids}
+    trees = {f: cKDTree(clouds[f]) for f in ids}
+    for i, f in enumerate(ids):
+        sel = np.nonzero(frames == f)[0]
+        pts = clouds[f]
+        spacing = np.median(trees[f].query(pts, k=min(2, len(pts)))[0][:, -1]) if len(pts) > 1 else 0.0
+        steps = []
+        for j, sign in ((i + 1, 1.0), (i - 1, -1.0)):
+            if 0 <= j < len(ids):
+                g = ids[j]
+                _, nearest = trees[g].query(pts)
+                steps.append(sign * (clouds[g][nearest] - pts) / abs(float(g) - float(f)))
+        if not steps:
+            continue
+        motion = np.mean(steps, axis=0)
+        if len(pts) > smooth:  # neighbours on the surface move together
+            _, nb = trees[f].query(pts, k=smooth)
+            motion = motion[nb].mean(axis=1)
+        motion[np.linalg.norm(motion, axis=1) < 1.5 * spacing] = 0.0
+        velocities[sel] = motion
+    return velocities.astype(np.float32)
+
+
 def init_gaussian_params(xyz: np.ndarray, rgb: np.ndarray, frames: np.ndarray, sh_degree: int,
-                         init_opacity: float = 0.1, init_duration: float = 1.0) -> nn.ParameterDict:
+                         init_opacity: float = 0.1, init_duration: float = 1.0,
+                         velocities: np.ndarray | None = None) -> nn.ParameterDict:
     """Isotropic Gaussians sized by the distance to their neighbours of the same frame."""
     from scipy.spatial import cKDTree
 
@@ -62,7 +101,8 @@ def init_gaussian_params(xyz: np.ndarray, rgb: np.ndarray, frames: np.ndarray, s
             "shN": nn.Parameter(torch.zeros(n, num_sh_bases(sh_degree) - 1, 3)),
             "times": nn.Parameter(torch.from_numpy(frames.copy())),
             "durations": nn.Parameter(torch.full((n,), math.log(init_duration))),
-            "velocities": nn.Parameter(torch.zeros(n, 3)),
+            "velocities": nn.Parameter(torch.zeros(n, 3) if velocities is None
+                                       else torch.from_numpy(np.asarray(velocities, dtype=np.float32))),
         }
     )
 
@@ -80,9 +120,11 @@ class SceneView:
         self.sh_degree = sh_degree
         self.static = static
 
-    def state_at(self, frame: float) -> dict[str, Tensor]:
+    def state_at(self, frame: float | Tensor) -> dict[str, Tensor]:
         """Activated parameters of the Gaussians alive at ``frame`` (a frame index, may be fractional).
 
+        ``frame`` may be a 0-dim tensor: the result is then differentiable with
+        respect to time, which is how the time offset of a camera is learned.
         ``active`` holds their indices in the full parameter arrays (None = all).
         """
         p = self.params
@@ -91,7 +133,7 @@ class SceneView:
             active, means = None, p["means"]
             pick = lambda x: x  # noqa: E731
         else:
-            dt = float(frame) - p["times"]
+            dt = frame - p["times"]
             sigma = torch.exp(p["durations"]).clamp(min=MIN_DURATION)
             opacities = opacities * torch.exp(-0.5 * (dt / sigma) ** 2)
             active = torch.nonzero(opacities.detach() >= ALPHA_MIN).squeeze(-1)
@@ -136,11 +178,11 @@ class DynamicScene(nn.Module):
             return SceneView(dict(self.params.items()), self.sh_degree, self.static)
         return SceneView({k: v.to(device) for k, v in self.params.items()}, self.sh_degree, self.static)
 
-    def state_at(self, frame: float) -> dict[str, Tensor]:
+    def state_at(self, frame: float | Tensor) -> dict[str, Tensor]:
         return self.view().state_at(frame)
 
 
-def render_scene(scene: DynamicScene | SceneView, frame: float, viewmats: Tensor, Ks_opencv: Tensor,
+def render_scene(scene: DynamicScene | SceneView, frame: float | Tensor, viewmats: Tensor, Ks_opencv: Tensor,
                  width: int, height: int, backend: str = "auto", antialiased: bool = False,
                  active_sh_degree: int | None = None):
     """Render the scene at ``frame`` from C cameras.

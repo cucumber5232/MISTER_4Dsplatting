@@ -58,6 +58,7 @@ def render_orbit(run_dir: str | Path, out_path: str | Path, seconds: float = 8.0
     scene, ckpt = load_checkpoint(Path(run_dir) / "ckpt.pt", dev)
     meta = ckpt["meta"]
     backend = resolve_backend(ckpt["config"].get("backend", "auto"), dev)
+    antialiased = bool(ckpt["config"].get("antialiased", False))
     cams = [Camera.from_dict(n, meta["cameras"][n]) for n in meta["train_cameras"]]
     ref = cams[0]
     if fixed_camera is not None:
@@ -80,7 +81,8 @@ def render_orbit(run_dir: str | Path, out_path: str | Path, seconds: float = 8.0
             view[:3, :3], view[:3, 3] = R, t
             viewmat = torch.tensor(view, dtype=torch.float32, device=dev)[None]
             frame = ping_pong(int(round(i * meta["fps"] / fps)), num_frames)
-            rgb, alpha, *_ = render_scene(scene, frame, viewmat, K_t, width, height, backend=backend)
+            rgb, alpha, *_ = render_scene(scene, frame, viewmat, K_t, width, height, backend=backend,
+                                          antialiased=antialiased)
             img = (rgb[0] + (1.0 - alpha[0]) * bg).clamp(0, 1)
             writer.write((img * 255 + 0.5).to(torch.uint8).cpu().numpy())
     log(f"[render] {total} frames at {width}x{height} -> {out_path}")

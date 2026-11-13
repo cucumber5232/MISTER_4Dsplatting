@@ -308,8 +308,13 @@ def _to_uint8(img: np.ndarray, rng: np.random.Generator, noise: float) -> np.nda
 # ---------------------------------------------------------------------------
 
 
-def make_prepared_dataset(out_dir: str | Path, cfg: SynthConfig, init_points: int = 2000) -> Path:
-    """Write a ready-to-train dataset (pinhole cameras, exact masks, ``init_points`` per frame)."""
+def make_prepared_dataset(out_dir: str | Path, cfg: SynthConfig, init_points: int = 2000,
+                          time_offsets: dict[str, float] | None = None) -> Path:
+    """Write a ready-to-train dataset (pinhole cameras, exact masks, ``init_points`` per frame).
+
+    ``time_offsets`` (frames, per camera) simulates cameras that are not
+    exposed at the same instant: camera c shows the subject at frame + offset.
+    """
     out = Path(out_dir)
     rig = make_rig(cfg, distorted=False)
     rng = np.random.default_rng(cfg.seed)
@@ -323,15 +328,16 @@ def make_prepared_dataset(out_dir: str | Path, cfg: SynthConfig, init_points: in
         cv2.imwrite(str(out / "background" / f"{name}.jpg"),
                     cv2.cvtColor(_to_uint8(background, rng, 0.0), cv2.COLOR_RGB2BGR))
         for fid in frame_ids:
-            phase = fid / max(cfg.take_frames - 1, 1)
-            rgb, hit = render_subject(origin, dirs, mannequin(phase))
+            phase = (fid + (time_offsets or {}).get(name, 0.0)) / max(cfg.take_frames - 1, 1)
+            rgb, hit = render_subject(origin, dirs, mannequin(float(np.clip(phase, 0.0, 1.0))))
             img = np.where(hit[..., None], rgb, background)
             cv2.imwrite(str(out / "images" / name / f"{frame_name(fid)}.png"),
                         cv2.cvtColor(_to_uint8(img, rng, cfg.noise), cv2.COLOR_RGB2BGR))
             cv2.imwrite(str(out / "masks" / name / f"{frame_name(fid)}.png"),
                         hit.astype(np.uint8) * 255)
     rig.save(out / "calibration.json")
-    write_meta(out, cfg.fps, frame_ids, rig.names, {"source": "synthetic"})
+    write_meta(out, cfg.fps, frame_ids, rig.names,
+               {"source": "synthetic", "true_time_offsets": time_offsets or {}})
     if init_points > 0:  # points on the true surface of every frame: a stand-in for the visual hull
         clouds = [surface_points(mannequin(f / max(cfg.take_frames - 1, 1)), init_points, rng) for f in frame_ids]
         write_points_ply(out / "init_points.ply", np.concatenate([c[0] for c in clouds]),

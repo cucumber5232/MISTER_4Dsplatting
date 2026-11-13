@@ -16,12 +16,12 @@ video per camera → ingest → calibrate → prepare → masks → init → tra
 | Passo | Che cosa fa |
 |---|---|
 | `ingest` | controlla i file, allinea le camere nel tempo (audio, flash o manuale), segnala i frame mancanti, estrae i frame |
-| `calibrate` | intrinseci, distorsione ed estrinseci del rig da un pannello ChArUco; sistema mondo metrico |
+| `calibrate` | intrinseci, distorsione ed estrinseci del rig da un pannello ChArUco; sistema mondo metrico; stima della copertura |
 | `prepare` | undistort e ridimensionamento con intrinseci coerenti; fondale del set vuoto |
 | `masks` | maschere soggetto/sfondo per confronto con il set vuoto |
 | `init` | visual hull di ogni frame: geometria iniziale e ingombro del soggetto |
-| `train` | ottimizzazione della scena dinamica su tutte le GPU disponibili |
-| `eval` | metriche e immagini di confronto su una camera esclusa dal training |
+| `train` | ottimizzazione della scena dinamica su tutte le GPU disponibili; su richiesta impara gli scarti di sync tra camere |
+| `eval` | metriche (qualità, sagoma, sfarfallio) e immagini di confronto su una camera esclusa dal training |
 | `render` | video da una camera virtuale che gira attorno al soggetto |
 | `export` | player 4D in **un solo file HTML** che si apre con doppio clic; in alternativa cartella per `view` o sequenza di `.ply` |
 
@@ -49,7 +49,11 @@ Verificato in questo repository, su dati sintetici con verità nota
   dall'audio sia dal flash; un frame perso viene segnalato e non rinumerato;
 - calibrazione ChArUco: errore di riproiezione 0,12 px; posizioni delle camere
   entro 5 mm e focali entro lo 0,2% dai valori veri;
-- ricostruzione dinamica: vedi [Risultato della demo](#risultato-della-demo).
+- ricostruzione dinamica: vedi [Risultato della demo](#risultato-della-demo);
+- scarti di sincronizzazione sotto il frame: con due camere sfasate di +0,40 e
+  −0,30 frame il training ne ha stimati +0,18 e −0,31 e la qualità è salita
+  (IoU della sagoma dalla camera esclusa da 0,78 a 0,80): segno e ordine di
+  grandezza giusti, valore non sempre esatto.
 
 **Non ancora verificato** (lo sviluppo è avvenuto su una macchina Linux senza
 GPU e senza riprese reali):
@@ -150,13 +154,19 @@ un quarto d'ora). Al termine aprire con doppio clic
 Demo eseguita su CPU a 240×135 px, 29 frame, training su 3 camere
 (`cam01`, `cam03`, `cam04`) e `cam02` esclusa e usata come verifica:
 
-| | PSNR soggetto | IoU sagoma |
-|---|---|---|
-| camera esclusa (nuovo punto di vista) | 21,1 dB | 0,87 |
-| camere di training | 35,1 dB | 0,99 |
+| | PSNR soggetto | IoU sagoma | Sfarfallio |
+|---|---|---|---|
+| camera esclusa (nuovo punto di vista) | 21,2 dB | 0,87 | 3,4 |
+| camere di training | 35,3 dB | 0,99 | 1,8 |
 
 Sono numeri di una prova minuscola su CPU: servono a dire che la catena
 funziona da un capo all'altro, non a prevedere la qualità su riprese reali.
+Lo scarto tra le due righe è quasi tutto geometria: tolta `cam02`, le tre
+camere rimaste lasciano un angolo scoperto di circa 100° proprio dove guarda
+lei, e da lì il soggetto può apparire fino al 60% più largo (lo dice il
+programma stesso: vedi "Copertura delle camere" in
+[docs/PIPELINE.md](docs/PIPELINE.md)). Con tutte e quattro le camere lo stesso
+calcolo dà il 10%.
 
 ## Flusso con riprese reali
 
@@ -267,10 +277,14 @@ scelta in [docs/PIPELINE.md](docs/PIPELINE.md).
 
 - **Poche camere = un settore.** Con 3–4 camere la ricostruzione è credibile
   dai punti di vista vicini a quelli ripresi; il retro e le zone mai viste non
-  vengono inventate. `render` percorre solo l'arco coperto dal rig.
-- **Sincronizzazione.** Il software allinea al frame più vicino e riporta
-  l'errore residuo; non può correggere esposizioni non simultanee. Per gesti
-  rapidi serve sincronizzazione hardware.
+  vengono inventate. `render` percorre solo l'arco coperto dal rig. Tra una
+  camera e l'altra il soggetto appare più largo del vero, tanto più quanto le
+  camere sono distanti: `calibrate` e `train` dicono di quanto (dettagli in
+  [docs/PIPELINE.md](docs/PIPELINE.md), "Copertura delle camere").
+- **Sincronizzazione.** `ingest` allinea al frame più vicino e riporta l'errore
+  residuo. Lo scarto sotto il frame si può far stimare al training
+  (`--set learn_time_offsets=true`), ma è una stima: per gesti rapidi resta
+  preferibile la sincronizzazione hardware.
 - **Maschere.** Dipendono dal set vuoto: luce o inquadratura che cambiano tra
   le due riprese le rovinano; le ombre nette a terra possono entrare nella
   maschera. Si possono fornire maschere fatte con altri strumenti.

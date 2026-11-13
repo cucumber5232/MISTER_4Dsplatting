@@ -24,9 +24,11 @@ import numpy as np
 import torch
 import yaml
 
+from .camera import describe_coverage, silhouette_coverage
 from .dataset import MultiViewDataset, read_points_ply
 from .losses import psnr, scale_regularizer, ssim
-from .model import DynamicScene, init_gaussian_params, render_scene, save_checkpoint
+from .model import (DynamicScene, estimate_velocities, init_gaussian_params, render_scene,
+                    save_checkpoint)
 from .rasterizer import resolve_backend
 
 
@@ -47,6 +49,8 @@ class TrainConfig:
     sh_degree: int = 0  # 0 = view-independent colour (safest with few cameras)
     sh_interval: int = 1000  # steps between SH degree increases
     init_duration: float = 1.0  # initial life of a Gaussian, in units of the init frame spacing
+    init_velocities: bool = True  # start from the motion estimated between the init point clouds
+    learn_time_offsets: bool = False  # cameras not exposed together: learn their sub-frame offsets
     init_opacity: float = 0.1
     init_random_points: int = 20000  # used only when there is no init_points.ply
 
@@ -70,6 +74,7 @@ class TrainConfig:
     lr_shN: float = 1.25e-4
     lr_times: float = 2e-3  # frames
     lr_durations: float = 5e-3
+    lr_time_offsets: float = 5e-3  # frames
 
     # --- densification ------------------------------------------------------
     densify: bool = True
@@ -266,18 +271,21 @@ def _initial_points(ds: MultiViewDataset, cfg: TrainConfig, static_frame: int | 
 
 
 @torch.no_grad()
-def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=False) -> dict:
+def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=False,
+                   time_offsets: dict | None = None) -> dict:
     """PSNR against the (masked) ground truth on a white background."""
-    viewmats, Ks = ds.camera_tensors(cams, device)
     values = []
-    for fi in frame_indices:
-        gt, mask = ds.batch(fi, cams, device)
-        rgb, alpha, *_ = render_scene(scene, fi, viewmats, Ks, ds.width, ds.height,
-                                      backend=backend, antialiased=antialiased)
-        if mask is not None:
-            gt = gt * mask + (1.0 - mask)
-            rgb = rgb + (1.0 - alpha)
-        values.append(psnr(rgb.clamp(0, 1), gt))
+    for cam in cams:
+        viewmats, Ks = ds.camera_tensors([cam], device)
+        shift = (time_offsets or {}).get(cam, 0.0)
+        for fi in frame_indices:
+            gt, mask = ds.batch(fi, [cam], device)
+            rgb, alpha, *_ = render_scene(scene, fi + shift, viewmats, Ks, ds.width, ds.height,
+                                          backend=backend, antialiased=antialiased)
+            if mask is not None:
+                gt = gt * mask + (1.0 - mask)
+                rgb = rgb + (1.0 - alpha)
+            values.append(psnr(rgb.clamp(0, 1), gt))
     return {"psnr": float(np.mean(values))}
 
 
@@ -313,8 +321,9 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
         iterations = 7000 if static else max(7000, 250 * ds.num_frames)
 
     xyz, rgb, frames, frame_step = _initial_points(ds, cfg, static_frame)
+    velocities = estimate_velocities(xyz, frames) if cfg.init_velocities and not static else None
     params = init_gaussian_params(xyz, rgb, frames, cfg.sh_degree, cfg.init_opacity,
-                                  cfg.init_duration * frame_step)
+                                  cfg.init_duration * frame_step, velocities)
     scene = DynamicScene(params, cfg.sh_degree, static).to(master)
 
     lrs = {"means": cfg.lr_means * cam_dist, "scales": cfg.lr_scales, "quats": cfg.lr_quats,
@@ -328,6 +337,21 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
     gamma = cfg.lr_final_factor ** (1.0 / max(iterations, 1))
     schedulers = [torch.optim.lr_scheduler.ExponentialLR(optimizers[k], gamma=gamma)
                   for k in ("means", "velocities")]
+
+    # Sub-frame synchronisation: one time offset per training camera, relative
+    # to the first one. The scene is continuous in time, so a camera that was
+    # exposed a fraction of a frame late is simply rendered that much later.
+    offsets = offset_opt = None
+    if cfg.learn_time_offsets and not static:
+        offsets = torch.nn.Parameter(torch.zeros(len(train_cams), device=master))
+        offset_opt = torch.optim.Adam([offsets], lr=cfg.lr_time_offsets)
+        offset_free = torch.ones(len(train_cams), device=master)
+        offset_free[0] = 0.0  # the reference camera defines the clock
+
+    def learned_offsets() -> dict[str, float]:
+        if offsets is None:
+            return {}
+        return {c: float(v) for c, v in zip(train_cams, (offsets.detach() * offset_free).cpu())}
 
     # Densification: gsplat's default strategy (clone / split / prune). Two
     # instances share one state so that growth can be switched off at the cap.
@@ -372,6 +396,9 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
           f"masks={'yes' if ds.has_masks else 'NO'} gaussians={scene.num_gaussians} "
           f"model={'static, frame ' + str(static_frame) if static else 'dynamic'} "
           f"iterations={iterations} images/step={len(devices) * min(cfg.views_per_step, len(train_cams))}")
+    coverage = silhouette_coverage([ds.rig.cameras[c] for c in train_cams], center)
+    meta["coverage"] = coverage
+    print(f"[train] coverage of the training cameras: {describe_coverage(coverage)}")
     if master.type == "cpu":
         print("[train] WARNING: no GPU in use: the CPU reference rasterizer is only meant for "
               "tests on tiny images")
@@ -396,11 +423,21 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
         gt, mask = _to_device(arrays, dev)
         viewmats, Ks = cam_tensors[str(dev)]
         sel = [cam_index[c] for c in cams]
-        rgb, alpha, _, info, state = render_scene(
-            scene.view(dev), frame_index, viewmats[sel], Ks[sel], ds.width, ds.height,
-            backend=backends[slot], antialiased=cfg.antialiased, active_sh_degree=active_sh)
-        if strategy_state is not None and info["means2d"].requires_grad:
-            info["means2d"].retain_grad()
+        view = scene.view(dev)
+        options = dict(backend=backends[slot], antialiased=cfg.antialiased, active_sh_degree=active_sh)
+        if offsets is None:
+            renders = [render_scene(view, frame_index, viewmats[sel], Ks[sel], ds.width, ds.height, **options)]
+        else:  # every camera at its own instant
+            shift = (offsets * offset_free).to(dev)
+            renders = [render_scene(view, frame_index + shift[i], viewmats[[i]], Ks[[i]],
+                                    ds.width, ds.height, **options) for i in sel]
+        rgb = torch.cat([r[0] for r in renders])
+        alpha = torch.cat([r[1] for r in renders])
+        infos = [(r[3], r[4]["active"]) for r in renders]
+        if strategy_state is not None:
+            for info, _ in infos:
+                if info["means2d"].requires_grad:
+                    info["means2d"].retain_grad()
         if mask is not None:
             bg = torch.rand(3, device=dev) if cfg.random_background else torch.ones(3, device=dev)
             pred = rgb + (1.0 - alpha) * bg
@@ -411,13 +448,15 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
         loss = (1.0 - cfg.lambda_dssim) * l1 + cfg.lambda_dssim * (1.0 - ssim(pred, target))
         if mask is not None and cfg.lambda_mask > 0:
             loss = loss + cfg.lambda_mask * (alpha - mask).abs().mean()
-        if state["means"].shape[0] > 0:
+        for state in (r[4] for r in renders):
+            if state["means"].shape[0] == 0:
+                continue
             if cfg.lambda_scale > 0:
-                loss = loss + cfg.lambda_scale * scale_regularizer(
+                loss = loss + cfg.lambda_scale / len(renders) * scale_regularizer(
                     state["scales"], cfg.max_scale, cfg.max_anisotropy)
             if state["velocities"] is not None and cfg.lambda_velocity > 0:
-                loss = loss + cfg.lambda_velocity * state["velocities"].norm(dim=-1).mean()
-        return loss, l1.detach(), info, state["active"]
+                loss = loss + cfg.lambda_velocity / len(renders) * state["velocities"].norm(dim=-1).mean()
+        return loss, l1.detach(), infos
 
     try:
         for step in range(iterations):
@@ -436,9 +475,13 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
                 opt.zero_grad(set_to_none=True)
             for sched in schedulers:
                 sched.step()
+            if offset_opt is not None:
+                if step >= iterations // 10:  # once the scene has taken shape
+                    offset_opt.step()
+                offset_opt.zero_grad(set_to_none=True)
 
             if strategy_state is not None:
-                info = _merge_info([(r[2], r[3]) for r in results], scene.num_gaussians, master)
+                info = _merge_info([pair for r in results for pair in r[2]], scene.num_gaussians, master)
                 active = grow if scene.num_gaussians < cfg.max_gaussians else hold
                 active.step_post_backward(scene.params, optimizers, strategy_state, step, info,
                                           packed=False)
@@ -459,7 +502,7 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
                 if (cfg.eval_every > 0 and step % cfg.eval_every == 0) or last:
                     record["psnr_" + ("holdout" if val_cams else "train")] = round(
                         evaluate_views(scene, ds, eval_frames, eval_cams, master, backends[0],
-                                       cfg.antialiased)["psnr"], 2)
+                                       cfg.antialiased, learned_offsets())["psnr"], 2)
                 log_file.write(json.dumps(record) + "\n")
                 log_file.flush()
                 print("[train] " + "  ".join(f"{k}={v}" for k, v in record.items()), flush=True)
@@ -471,6 +514,11 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig) -> Path:
             workers.shutdown(wait=False)
         log_file.close()
 
+    meta["time_offsets"] = learned_offsets()
+    if offsets is not None:
+        ms = 1000.0 / ds.fps
+        print("[train] learned time offsets relative to " + train_cams[0] + ": " + ", ".join(
+            f"{c} {v:+.2f} frames ({v * ms:+.1f} ms)" for c, v in meta["time_offsets"].items() if c != train_cams[0]))
     ckpt_path = out_dir / "ckpt.pt"
     save_checkpoint(ckpt_path, scene, cfg_dict, meta, iterations)
     print(f"[train] done in {time.time() - t_start:.0f}s -> {ckpt_path}")

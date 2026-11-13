@@ -72,8 +72,12 @@ conversione di mezzo pixel del punto principale avviene in un solo punto
    direzione perpendicolare agli assi orizzontali delle immagini, assumendo
    camere montate senza rollio).
 
+6. Copertura: dalle sole pose si calcola quanto le sagome vincolano la forma
+   (vedi "Copertura delle camere" più sotto).
+
 Uscita: `calibration.json` con camere, volume di cattura e un `report` (RMS
-complessivo e per camera, frame condivisi per coppia, versione OpenCV).
+complessivo e per camera, frame condivisi per coppia, copertura, versione
+OpenCV).
 
 ### `prepare` — dataset pronto per il training
 
@@ -137,6 +141,21 @@ indipendenti.
 > economico spegnerli che spostarli). È il motivo della scelta attuale; resta
 > una strada per il futuro, con vincoli aggiuntivi (vedi roadmap nel README).
 
+Le velocità non partono da zero: ogni frame ha una nuvola di punti propria, e
+lo spostamento verso il punto più vicino del frame successivo e precedente
+dice come si è mossa la superficie lungo la normale (`estimate_velocities`).
+Sui dati sintetici questo riduce di circa un terzo lo scarto tra i punti di un
+frame e la superficie del frame dopo nelle parti in moto (95° percentile da 9,6
+a 6,8 cm).
+
+**Sincronizzazione sotto il frame (`learn_time_offsets`).** Il modello è
+continuo nel tempo, quindi una camera che ha esposto con una frazione di frame
+di ritardo può essere renderizzata esattamente a quell'istante. Con questa
+opzione il training impara uno scarto temporale per camera (la prima fa da
+riferimento) insieme alla scena, e lo riporta in frame e millisecondi. È
+pensata per camere senza trigger o genlock; con camere sincronizzate via
+hardware va lasciata spenta.
+
 Ottimizzazione (`trainer.py`):
 
 - a ogni passo ogni GPU riceve un istante casuale e alcune camere; perdita
@@ -166,13 +185,18 @@ Opzioni: `configs/default.yaml` e `TrainConfig` in `trainer.py`. Le più utili:
 | `sh_degree` | 0 | 1–2 solo con molte camere (colore dipendente dalla vista) |
 | `max_gaussians` | 2 000 000 | limite di memoria |
 | `init_duration` | 1.0 | vita iniziale di una Gaussiana, in frame inizializzati |
+| `learn_time_offsets` | false | `true` con camere non sincronizzate via hardware |
+| `init_velocities` | true | velocità iniziali stimate dal moto dei punti |
 | `static` | false | `true`: 3DGS statico di un solo istante (`static_frame`) |
 | `devices` | `auto` | es. `cuda:0` per usare una sola GPU |
 
 ### `eval`, `render`, `export`, `view`
 
-- `eval`: PSNR, SSIM, IoU della sagoma e PSNR nel riquadro del soggetto, per
-  camera; prima le camere escluse dal training. Scrive `eval/summary.md`,
+- `eval`: PSNR, SSIM, IoU della sagoma, PSNR nel riquadro del soggetto e
+  sfarfallio, per camera; prima le camere escluse dal training. Lo sfarfallio
+  è la variazione tra frame consecutivi che non c'è nelle riprese (in livelli
+  a 8 bit): vale zero per un risultato che si muove esattamente come il
+  soggetto, qualunque sia il suo errore statico. Scrive `eval/summary.md`,
   `metrics.json` e immagini verità | render | errore.
 - `render`: video da una camera virtuale che percorre l'arco coperto dal rig
   (giro completo solo se le camere circondano il soggetto).
@@ -184,6 +208,38 @@ Opzioni: `configs/default.yaml` e `TrainConfig` in `trainer.py`. Le più utili:
   strumenti. È il formato pesante (non compresso).
 - `view`: piccolo server HTTP locale (solo `127.0.0.1`) per la cartella `web`:
   serve perché i browser non lasciano leggere file separati da `file://`.
+
+## Copertura delle camere
+
+Ogni camera vincola la forma del soggetto solo di traverso alla propria linea
+di vista. Viste dall'alto, due camere le cui linee di vista distano `g` gradi
+lasciano una forma che, guardata dal centro di quell'angolo, può essere
+`1 / cos(g / 2)` volte più larga del vero (un arto tondo diventa un rombo).
+Camere una di fronte all'altra contano una volta sola: vedono la stessa sagoma.
+
+| Linee di vista | Angolo massimo | Allargamento nel caso peggiore |
+|---|---|---|
+| 3 camere a −75°, 25°, 75° (la demo con una camera esclusa) | 100° | +56% |
+| 4 camere su un arco di 150° (la demo completa) | 50° | +10% |
+| 8 camere ogni 45° (4 linee di vista: le opposte coincidono) | 45° | +8% |
+| 9 camere ogni 40° (9 linee di vista) | 20° | +1,5% |
+
+`calibrate` e `train` stampano questo valore per il rig in uso, ed è la
+spiegazione principale di ciò che si vede da una camera esclusa: nelle prove
+di sviluppo nessuna variante dell'ottimizzazione ha ridotto quell'errore, la
+disposizione delle camere sì. Due conseguenze pratiche: conviene distribuire
+le linee di vista su 180° senza coppie esattamente opposte (le camere rialzate
+e sfalsate della guida servono anche a questo), e una camera tenuta fuori dal
+training va scelta sapendo che lascia un buco dove stava.
+
+### Che cosa è stato provato e scartato
+
+Misurato su dati sintetici con geometria nota, senza effetto utile e quindi
+non incluso: carving per foto-consistenza del visual hull, scarto casuale di
+Gaussiane durante il training, vincolo di coerenza fotometrica tra camere
+sulla profondità renderizzata, durate iniziali più brevi, rasterizzazione
+antialiasing. Sono prove a bassa risoluzione su CPU: a piena risoluzione su
+GPU alcune potrebbero comportarsi diversamente.
 
 ## Formato del player web
 

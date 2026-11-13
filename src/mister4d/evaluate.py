@@ -39,6 +39,7 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
     scene, ckpt = load_checkpoint(run / "ckpt.pt", dev)
     meta = ckpt["meta"]
     backend = resolve_backend(ckpt["config"].get("backend", "auto"), dev)
+    antialiased = bool(ckpt["config"].get("antialiased", False))
     ds = MultiViewDataset(data_dir or meta["data_dir"])
     out = run / "eval"
     out.mkdir(exist_ok=True)
@@ -51,11 +52,13 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
     for group, cams in (("holdout", meta["holdout_cameras"]), ("train", meta["train_cameras"])):
         for cam in cams:
             viewmats, Ks = ds.camera_tensors([cam], dev)
+            shift = (meta.get("time_offsets") or {}).get(cam, 0.0)  # learned sub-frame offset
             rows = []
+            previous = None  # (frame index, render, ground truth) of the frame before
             for k, fi in enumerate(frames):
                 gt, mask = ds.batch(fi, [cam], dev)
-                rgb, alpha, *_ = render_scene(scene, fi, viewmats, Ks, ds.width, ds.height,
-                                              backend=backend)
+                rgb, alpha, *_ = render_scene(scene, fi + shift, viewmats, Ks, ds.width, ds.height,
+                                              backend=backend, antialiased=antialiased)
                 if mask is not None:  # compare subject only, on white
                     gt = gt * mask + (1.0 - mask)
                     pred = (rgb + (1.0 - alpha)).clamp(0, 1)
@@ -73,15 +76,22 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
                 if box is not None:
                     y0, y1, x0, x1 = box
                     row["psnr_subject"] = psnr(pred[:, y0:y1, x0:x1], gt[:, y0:y1, x0:x1])
+                    if previous is not None and previous[0] == fi - 1:
+                        # Change between consecutive frames that is not in the footage:
+                        # 0 for a result that moves exactly like the subject, whatever its
+                        # static errors. In 8-bit levels, inside the box of the subject.
+                        extra = (pred - previous[1]) - (gt - previous[2])
+                        row["flicker"] = float(extra[:, y0:y1, x0:x1].abs().mean() * 255.0)
+                previous = (fi, pred, gt)
                 rows.append(row)
                 if k in shown:
                     err = ((pred - gt).abs().mean(dim=-1, keepdim=True) * 4.0).clamp(0, 1).expand(-1, -1, -1, 3)
                     strip = torch.cat([gt[0], pred[0], err[0]], dim=1).cpu().numpy()
                     cv2.imwrite(str(out / f"{group}_{cam}_{ds.frame_ids[fi]:06d}.jpg"),
                                 cv2.cvtColor((strip * 255 + 0.5).astype(np.uint8), cv2.COLOR_RGB2BGR))
-            keys = [k for k in ("psnr", "psnr_subject", "ssim", "iou") if all(k in r for r in rows)]
+            keys = [k for k in ("psnr", "psnr_subject", "ssim", "iou", "flicker") if any(k in r for r in rows)]
             per_camera[cam] = {"group": group, "frames": rows,
-                               **{k: float(np.nanmean([r[k] for r in rows])) for k in keys}}
+                               **{k: float(np.nanmean([r[k] for r in rows if k in r])) for k in keys}}
             log(f"[eval] {group:7s} {cam}: " + "  ".join(f"{k}={per_camera[cam][k]:.3f}" for k in keys))
 
     def mean_of(group, key):
@@ -91,8 +101,8 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
     summary = {
         "train_cameras": meta["train_cameras"], "holdout_cameras": meta["holdout_cameras"],
         "frames_evaluated": len(frames), "gaussians": scene.num_gaussians,
-        "holdout": {k: mean_of("holdout", k) for k in ("psnr", "psnr_subject", "ssim", "iou")},
-        "train": {k: mean_of("train", k) for k in ("psnr", "psnr_subject", "ssim", "iou")},
+        "holdout": {k: mean_of("holdout", k) for k in ("psnr", "psnr_subject", "ssim", "iou", "flicker")},
+        "train": {k: mean_of("train", k) for k in ("psnr", "psnr_subject", "ssim", "iou", "flicker")},
         "per_camera": per_camera,
     }
     (out / "metrics.json").write_text(json.dumps(summary, indent=2))
@@ -104,8 +114,13 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
         "# Evaluation", "",
         f"- training cameras ({len(meta['train_cameras'])}): {', '.join(meta['train_cameras'])}",
         f"- held-out cameras ({len(meta['holdout_cameras'])}): {', '.join(meta['holdout_cameras']) or 'none'}",
-        f"- frames evaluated: {len(frames)}; Gaussians: {scene.num_gaussians}", "",
+        f"- frames evaluated: {len(frames)}; Gaussians: {scene.num_gaussians}",
     ]
+    if meta.get("coverage"):
+        from .camera import describe_coverage
+
+        lines.append(f"- coverage of the training cameras: {describe_coverage(meta['coverage'])}")
+    lines.append("")
     if meta["holdout_cameras"]:
         lines += ["The held-out cameras were never seen during training (nor by the visual hull if "
                   "`init --exclude` was used): their numbers measure novel-view quality. Training "
@@ -114,12 +129,15 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
     else:
         lines += ["**No camera was held out**: the numbers below only say how well the training "
                   "views are reproduced, not how the scene looks from a new point of view.", ""]
-    lines += ["| group | PSNR | PSNR subject | SSIM | silhouette IoU |", "|---|---|---|---|---|"]
+    lines += ["| group | PSNR | PSNR subject | SSIM | silhouette IoU | flicker |", "|---|---|---|---|---|---|"]
     for group in ("holdout", "train"):
         s = summary[group]
-        lines.append(f"| {group} | {fmt(s['psnr'])} | {fmt(s['psnr_subject'])} | {fmt(s['ssim'])} | {fmt(s['iou'])} |")
+        lines.append(f"| {group} | {fmt(s['psnr'])} | {fmt(s['psnr_subject'])} | {fmt(s['ssim'])} "
+                     f"| {fmt(s['iou'])} | {fmt(s['flicker'])} |")
     lines += ["", "PSNR subject = PSNR inside the bounding box of the subject (the full-frame value is "
-              "inflated by the uniform background). Images: ground truth | render | error x4."]
+              "inflated by the uniform background). Flicker = change between consecutive frames that "
+              "is not in the footage, in 8-bit levels inside the box of the subject (lower is better; "
+              "needs every frame, i.e. --frame-step 1). Images: ground truth | render | error x4."]
     (out / "summary.md").write_text("\n".join(lines) + "\n")
     log(f"[eval] report in {out}")
     return summary

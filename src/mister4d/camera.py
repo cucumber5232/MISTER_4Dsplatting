@@ -220,3 +220,41 @@ def rig_center_and_up(cams: list[Camera]) -> tuple[np.ndarray, np.ndarray, str]:
         if up @ np.mean([c.center - center for c in cams], axis=0) < 0:
             up = -up  # sign is a guess: cameras are assumed not lower than what they look at
     return center, up / np.linalg.norm(up), mode
+
+
+def silhouette_coverage(cams: list[Camera], center) -> dict:
+    """How well the outlines seen by these cameras pin down the shape of the subject.
+
+    Each camera constrains the subject only across its line of sight. Seen from
+    above, two cameras whose lines of sight are g degrees apart leave a shape
+    that can be 1 / cos(g / 2) times wider than the real one when looked at
+    from the middle of that gap (a round limb becomes a lozenge). Cameras
+    facing each other count once: they see the same outline.
+
+    Returns the largest gap between lines of sight, the two cameras around it
+    and the corresponding worst-case widening factor.
+    """
+    center = np.asarray(center, dtype=np.float64)
+    sight = []
+    for c in cams:
+        d = center - c.center
+        angle = float(np.degrees(np.arctan2(d[1], d[0])) % 180.0)
+        sight.append((0.0 if angle > 180.0 - 1e-6 else angle, c.name))
+    sight.sort()
+    worst = (-1.0, "", "")
+    for i, (angle, name) in enumerate(sight):
+        last = i + 1 == len(sight)
+        nxt, other = sight[0] if last else sight[i + 1]
+        gap = nxt + 180.0 - angle if last else nxt - angle  # the circle of lines of sight closes at 180
+        if gap > worst[0]:
+            worst = (gap, name, other)
+    gap = min(worst[0], 180.0)
+    widening = 1.0 / max(np.cos(np.radians(gap) / 2.0), 0.05)
+    return {"largest_gap_deg": round(gap, 1), "between": [worst[1], worst[2]],
+            "widening": round(float(widening), 3)}
+
+
+def describe_coverage(cov: dict) -> str:
+    return (f"largest gap between lines of sight {cov['largest_gap_deg']:.0f} deg "
+            f"({cov['between'][0]} / {cov['between'][1]}): seen from the middle of it the subject "
+            f"can look up to {(cov['widening'] - 1) * 100:.0f}% wider than it is")

@@ -3,7 +3,7 @@ import math
 import numpy as np
 import torch
 
-from mister4d.model import DynamicScene, init_gaussian_params
+from mister4d.model import DynamicScene, estimate_velocities, init_gaussian_params
 
 
 def _scene(static=False):
@@ -58,3 +58,38 @@ def test_initial_size_comes_from_neighbours_of_the_same_frame():
     scales = torch.exp(params["scales"][:, 0])
     assert scales[:50].mean() < 0.1 * scales[50:].mean()
     assert params["shN"].shape == (100, 3, 3)
+
+
+def _sphere(rng, n, center):
+    v = rng.normal(size=(n, 3))
+    v /= np.linalg.norm(v, axis=1, keepdims=True)
+    return v * 0.2 + center, v
+
+
+def test_velocities_follow_a_moving_surface_and_ignore_a_still_one():
+    """Each frame is sampled independently: only the motion along the normal can be seen."""
+    rng = np.random.default_rng(0)
+    step = np.array([0.05, 0.0, 0.0])  # metres per frame
+    clouds, normals = zip(*[_sphere(rng, 3000, f * step) for f in range(4)])
+    frames = np.repeat(np.arange(4), 3000)
+    v = estimate_velocities(np.concatenate(clouds), frames).reshape(4, 3000, 3)
+    for f in range(4):
+        front_or_back = np.abs(normals[f][:, 0]) > 0.8  # the surface moves along its normal here
+        assert 0.03 < v[f][front_or_back, 0].mean() < 0.06
+        assert np.abs(v[f][front_or_back, 1:]).mean() < 0.02  # only the normal component is seen
+
+    still = np.concatenate([_sphere(rng, 3000, np.zeros(3))[0] for _ in range(4)])
+    assert (np.linalg.norm(estimate_velocities(still, frames), axis=1) > 0).mean() < 0.02
+
+
+def test_time_is_differentiable_so_a_camera_offset_can_be_learned():
+    scene = _scene()
+    with torch.no_grad():
+        scene.params["velocities"][0] = torch.tensor([0.1, 0.0, 0.0])
+    when = torch.tensor(2.4, requires_grad=True)
+    state = scene.state_at(when)
+    state["means"][0, 0].backward(retain_graph=True)
+    assert abs(float(when.grad) - 0.1) < 1e-6  # moving the clock moves the Gaussian by its velocity
+    when.grad = None
+    state["opacities"].sum().backward()
+    assert float(when.grad) < 0  # and, past its instant, makes it fade
