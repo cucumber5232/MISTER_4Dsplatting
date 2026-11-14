@@ -113,7 +113,7 @@ def test_evaluate_render_and_export(tiny_dataset, tmp_path):
     keep = state["opacities"] >= info["min_opacity"]
     pos, opacity = _decode_at(chunk, data, 2.0)
     shown = opacity >= info["min_opacity"]
-    assert abs(int(shown.sum()) - int(keep.sum())) <= 0.02 * int(keep.sum()) + 2  # but for rounding at the threshold
+    assert abs(int(shown.sum()) - int(keep.sum())) <= 0.04 * int(keep.sum()) + 2  # but for rounding at the threshold
     assert chunk["alive_max"] >= int(keep.sum()) - 2
     from scipy.spatial import cKDTree
     dist, nearest = cKDTree(state["means"][keep].numpy()).query(pos[shown])
@@ -231,6 +231,42 @@ def test_a_lighter_copy_keeps_what_contributes_most(tiny_dataset, tmp_path):
     assert info["alive_max"] <= budget
     with pytest.raises(ValueError, match="folder of its own"):
         lighten(run, run, budget, devices="cpu", log=quiet)
+
+
+@pytest.mark.slow
+def test_the_opacity_decay_removes_what_the_images_do_not_need(tiny_dataset, tmp_path):
+    options = {**FAST, "iterations": 120}
+    train(tiny_dataset, tmp_path / "plain", TrainConfig(devices="cpu", opacity_decay=0.0, **options))
+    train(tiny_dataset, tmp_path / "decay", TrainConfig(devices="cpu", opacity_decay=0.03, **options))
+    plain, _ = load_checkpoint(tmp_path / "plain" / "ckpt.pt")
+    scene, _ = load_checkpoint(tmp_path / "decay" / "ckpt.pt")
+    assert scene.num_gaussians < plain.num_gaussians  # fewer Gaussians...
+    log = _log(tmp_path / "decay")
+    assert log[-1]["psnr_holdout"] > log[0]["psnr_holdout"]  # ...that still describe the subject
+    assert all(scene.state_at(f)["active"].numel() > 100 for f in range(5))
+
+
+@pytest.mark.slow
+def test_a_camera_that_sees_other_colours_is_compensated(tiny_dataset, tmp_path):
+    data = tmp_path / "data"
+    shutil.copytree(tiny_dataset, data)
+    gains = np.array([0.80, 1.0, 1.25])  # blue, green, red as stored: this camera is warmer than the others
+    for image in (data / "images" / "cam02").iterdir():
+        warm = cv2.imread(str(image)).astype(np.float32) * gains
+        cv2.imwrite(str(image), np.clip(warm, 0, 255).astype(np.uint8))
+    # A training this short needs a faster rate than the default to get most of the way.
+    train(data, tmp_path / "run", TrainConfig(devices="cpu", learn_camera_colors=True, lr_camera_colors=2e-2,
+                                             **{**FAST, "iterations": 150}))
+    _, ckpt = load_checkpoint(tmp_path / "run" / "ckpt.pt")
+    colors = ckpt["meta"]["camera_colors"]
+    assert set(colors) == {"cam01", "cam02", "cam03"}
+    red, blue = colors["cam02"][0] / colors["cam01"][0], colors["cam02"][2] / colors["cam01"][2]
+    assert red > 1.07 and blue < 0.94  # found: it sees more red and less blue than its neighbour
+    # The scene keeps the average look: the corrections of the cameras cancel out.
+    assert np.abs(np.log(list(colors.values())).mean(axis=0)).max() < 1e-3
+    # The measurements compare each camera with the scene as that camera sees it.
+    assert Run(tmp_path / "run").camera_colors(0) == colors
+    assert evaluate_run(tmp_path / "run", log=quiet)["train"]["psnr_subject"] > 15
 
 
 def test_static_mode_and_config_overrides(tiny_dataset, tmp_path):

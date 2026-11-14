@@ -21,6 +21,14 @@ copiato codice da repository di ricerca.
 Dal mondo Gaussian Splatting si usa **solo gsplat** (Apache-2.0): il
 rasterizzatore CUDA e la strategia di densificazione.
 
+Alcune scelte di metodo prendono spunto da **articoli scientifici pubblicati**
+(l'elenco, con che cosa ne è stato tratto e che cosa è stato misurato, è in
+[PIPELINE.md](PIPELINE.md), "Idee recenti: che cosa è stato provato"). Di
+quegli articoli è stata usata l'idea, riletta e riscritta qui: non il codice
+dei loro autori, che spesso ha licenze di sola ricerca o dipende da codice che
+le ha. Un'idea descritta in un articolo non è coperta dal diritto d'autore;
+può però essere oggetto di brevetto (vedi §4, punto 2).
+
 ## 2. Dipendenze
 
 | Componente | Licenza | Uso | Note |

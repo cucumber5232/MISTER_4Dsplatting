@@ -110,7 +110,8 @@ def test_commands_follow_the_options(studio, tmp_path):
     studio.set_videos(make_clips(tmp_path / "riprese"))
     studio.set_options({"sync": "audio", "skip_frames": 8, "square_cm": 10.0, "marker_cm": 7.5,
                         "floor_frame": 12, "downscale": 2, "keep_shadows": True, "holdout": "cam02",
-                        "iterations": 500, "devices": "cuda:0", "learn_time_offsets": True})
+                        "iterations": 500, "devices": "cuda:0", "learn_time_offsets": True,
+                        "learn_camera_colors": True})
 
     calib, empty, take = cli_args(studio, "video")
     assert calib[0] == empty[0] == take[0] == "ingest"
@@ -131,6 +132,7 @@ def test_commands_follow_the_options(studio, tmp_path):
     for flag, value in (("--holdout", "cam02"), ("--iterations", "500"), ("--devices", "cuda:0"),
                         ("--set", "learn_time_offsets=true")):
         assert train[train.index(flag) + 1] == value
+    assert "learn_camera_colors=true" in train[train.index("--set") + 1:]
 
 
 def test_defaults_ask_for_nothing_optional(studio, tmp_path):

@@ -193,6 +193,11 @@ pre.log { max-height: 320px; margin: 0 0 20px; padding: 14px 16px; overflow: aut
 .toast { left: 50%; bottom: 28px; z-index: 5; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px));
   padding: 12px 18px; border-color: var(--danger); background: var(--glass-solid); }
 
+/* Something to know that does not go away by itself: the program was updated under the page. */
+.notice { left: 50%; top: calc(var(--edge) + var(--bar) + 8px); z-index: 4; transform: translateX(-50%);
+  max-width: min(640px, calc(100vw - 32px)); padding: 12px 18px; border-color: var(--accent);
+  background: var(--glass-solid); }
+
 .goodbye { position: fixed; inset: 0; z-index: 10; display: grid; place-content: center; gap: 8px; text-align: center;
   background: var(--bg); }
 .goodbye h2 { font-size: 26px; }
@@ -217,7 +222,7 @@ pre.log { max-height: 320px; margin: 0 0 20px; padding: 14px 16px; overflow: aut
   .step-link { grid-template-columns: 26px auto 20px; min-width: 190px; }
   .stage { padding: 24px 20px 32px; overflow: visible; }
   .step h2 { font-size: 24px; }
-  .toast, .tip { position: fixed; }
+  .toast, .tip, .notice { position: fixed; }
   .path-row { flex-wrap: wrap; }
   .path-row input { flex-basis: 100%; }
 }

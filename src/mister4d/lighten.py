@@ -156,7 +156,8 @@ def lighten(run_dir: str | Path, out_dir: str | Path, budget: int, data_dir: str
                                       eval_every=max(steps // 2, 1))
             offsets = meta.get("time_offsets") or None
             path, summary = _train_window(data_dir, seg, cfg, window=tuple(meta.get("window") or (first, last)),
-                                          core=(first, last), fixed_offsets=offsets, start=start)
+                                          core=(first, last), fixed_offsets=offsets, start=start,
+                                          fixed_colors=meta.get("camera_colors") or None)
             refined, saved = load_checkpoint(path)
             if visible_at_once(refined, first, last) > budget:  # the budget is a promise: trim what went over
                 score = contribution(refined, ds, cams, frames, devs[0], backend, bool(base.antialiased))

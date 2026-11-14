@@ -57,8 +57,9 @@ Il lavoro è diviso in sei passi, che il programma propone uno dopo l'altro.
    confrontandola con lo spazio vuoto, e mostra un'anteprima da controllare.
 5. Ricostruzione. È il passo lungo. Il programma parte da una forma grezza e
    la corregge moltissime volte, confrontando ogni volta quello che ha
-   costruito con le immagini vere, finché le due cose si assomigliano. Può
-   durare da qualche minuto a molte ore. Una ripresa lunga viene lavorata a
+   costruito con le immagini vere, finché le due cose si assomigliano.
+   Intanto toglie le macchie che non servono (vedi più sotto). Può durare da
+   qualche minuto a molte ore. Una ripresa lunga viene lavorata a
    pezzi di due secondi, uno dopo l'altro: se il lavoro viene interrotto, alla
    ripartenza i pezzi già fatti restano.
 6. Risultato. Il programma prepara il player, da aprire nel browser, in cui si
@@ -86,6 +87,24 @@ Su richiesta si ottengono anche:
   soli, senza computer;
 - la scena in un formato standard, per altri programmi di grafica 3D.
 
+## Come il programma tiene pulita la scena
+
+Con poche camere ci sono molti modi di disporre le macchie che danno le stesse
+immagini viste dalle camere, ma non tutti reggono quando ci si sposta in un
+punto in cui nessuna camera c'era: alcune macchie stanno dove non c'è niente
+e da lì si vedono come aloni.
+
+Per questo, a ogni correzione, ogni macchia che è stata usata perde un po'
+della sua forza. Quelle che servono davvero a ricomporre le immagini la
+riprendono subito; quelle che stanno lì senza motivo continuano a perderla,
+svaniscono e vengono tolte. Nelle prove la scena è risultata un po' più
+fedele vista da un punto nuovo, con meno macchie.
+
+L'idea viene da ricerche pubblicate nel 2025 e nel 2026 sulla ricostruzione
+con poche camere. Insieme a questa ne sono state provate altre tre: misurate,
+non hanno dato un miglioramento e sono rimaste fuori. Il programma che applica
+queste idee è stato scritto qui, senza copiare codice altrui.
+
 ## Quanto pesa la scena
 
 Si può scegliere tra tre pesi: massimo dettaglio, bilanciata, leggera. Nella
@@ -100,6 +119,11 @@ terzo. È la scelta adatta alle riprese lunghe e ai visori.
 - Dalla sincronizzazione. Se le camere non riprendono lo stesso istante, i
   movimenti veloci vengono confusi.
 - Dalla luce, che deve essere uniforme e non cambiare durante le riprese.
+- Dai colori. Camere diverse, o lasciate in automatico, vedono lo stesso
+  soggetto con colori un po' diversi, e la scena cambia tinta quando ci si
+  sposta. Conviene bloccare esposizione e bianco su tutte. Se non basta, nel
+  passo Ricostruzione c'è una casella che fa stimare al programma la
+  differenza di ogni camera e la compensa.
 - Dalla precisione della calibrazione.
 
 ## Che cosa non fa
@@ -108,6 +132,22 @@ terzo. È la scelta adatta alle riprese lunghe e ai visori.
 - Non inventa quello che nessuna camera ha visto.
 - Non è veloce: il tempo di calcolo cresce con la durata della ripresa.
 - Il risultato è fatto per essere guardato, non per prendere misure.
+
+## Avvio e aggiornamenti
+
+Il programma si apre con doppio clic su "MISTER 4D Studio". A ogni avvio
+controlla da solo tre cose.
+
+- Che ci siano tutte le librerie che gli servono. Se un aggiornamento ne ha
+  aggiunta una, la installa, senza toccare le altre.
+- Che non sia già aperto. In quel caso mostra la finestra già aperta invece di
+  aprirne una seconda.
+- Che la pagina che si vede e il programma che lavora dietro siano della
+  stessa versione.
+
+Se il programma viene aggiornato mentre è aperto, la pagina lo dice e chiede
+di chiuderlo e riaprirlo; fino ad allora non fa partire nuovi passi. Se viene
+riaperto lasciando aperta la pagina di prima, la pagina si aggiorna da sola.
 
 ## Dove restano i dati
 

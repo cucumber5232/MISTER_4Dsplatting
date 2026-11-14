@@ -29,6 +29,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from .ingest import VIDEO_EXTENSIONS
+from .launch import build_id
 
 ASSETS = Path(__file__).parent / "studio"
 THEME = Path(__file__).parent / "viewer" / "theme.css"
@@ -41,7 +42,8 @@ DEFAULT_OPTIONS = {
     "square_cm": 12.0, "marker_cm": 9.0, "squares_x": 5, "squares_y": 7,
     "dictionary": "DICT_4X4_50", "floor_frame": None,
     "downscale": 1, "mask_threshold": 24, "keep_shadows": False,
-    "holdout": "", "learn_time_offsets": False, "weight": 1, "iterations": None, "devices": "",
+    "holdout": "", "learn_time_offsets": False, "learn_camera_colors": False, "weight": 1,
+    "iterations": None, "devices": "",
     "extra_subject": False, "subject_view": "", "extra_headset": False, "headset_budget": 80000,
     "extra_ply": False,
 }
@@ -169,6 +171,10 @@ class Studio:
         self.problems: dict[str, str] = {}
         self.job: Job | None = None
         self.system: dict = {"checked": False}
+        # The code this server was started with. If the files change underneath (an update), the
+        # page says so and no new step starts: interface, server and steps must be one version.
+        self.build = build_id()
+        self._changed, self._looked = False, 0.0
         threading.Thread(target=self._check_system, daemon=True).start()
         last = (_read_json(MEMORY) or {}).get("last_project")
         if last and (Path(last) / "progetto.json").exists():
@@ -247,7 +253,8 @@ class Studio:
                    "square_cm": "calibrazione", "marker_cm": "calibrazione", "squares_x": "calibrazione",
                    "squares_y": "calibrazione", "dictionary": "calibrazione", "floor_frame": "calibrazione",
                    "downscale": "preparazione", "mask_threshold": "preparazione", "keep_shadows": "preparazione",
-                   "holdout": "ricostruzione", "learn_time_offsets": "ricostruzione", "weight": "ricostruzione",
+                   "holdout": "ricostruzione", "learn_time_offsets": "ricostruzione",
+                   "learn_camera_colors": "ricostruzione", "weight": "ricostruzione",
                    "iterations": "ricostruzione", "devices": "ricostruzione",
                    "extra_subject": "risultato", "subject_view": "risultato", "extra_headset": "risultato",
                    "headset_budget": "risultato", "extra_ply": "risultato"}
@@ -265,6 +272,13 @@ class Studio:
             if first:
                 self._invalidate_from(first)
             self.save()
+
+    def updated(self) -> bool:
+        """True when the program on disk is no longer the one this server was started with."""
+        if not self._changed and time.time() - self._looked > 10.0:
+            self._looked = time.time()
+            self._changed = build_id() != self.build
+        return self._changed
 
     def _require_idle(self) -> None:
         if self.job:
@@ -380,6 +394,8 @@ class Studio:
                 train += ["--holdout", str(o["holdout"])]
             if o.get("learn_time_offsets"):
                 overrides.append("learn_time_offsets=true")
+            if o.get("learn_camera_colors"):
+                overrides.append("learn_camera_colors=true")
             iterations, devices = o.get("iterations"), o.get("devices")
             # Weight of the scene: with 2 or 3 a Gaussian lives that many frames and moves with the
             # subject, instead of being replaced at every frame; the scene has that many times fewer.
@@ -448,6 +464,8 @@ class Studio:
             if self.project is None:
                 raise ValueError("Scegli prima la cartella del progetto.")
             self._require_idle()
+            if self.updated():
+                raise ValueError("Il programma è stato aggiornato: chiudilo con «Esci» e riaprilo prima di proseguire.")
             if not steps or any(step not in STEPS + ["esempio"] for step in steps):
                 raise ValueError("Passo sconosciuto.")
             for step in steps:
@@ -602,6 +620,7 @@ class Studio:
                               "problem": self.problems.get(step, ""),
                               "summary": self.summary(step) if status == "done" else None})
             return {
+                "build": self.build, "update": self.updated(),
                 "project": project, "system": {**self.system, "reduced": self.reduced},
                 "videos": self.video_report() if self.project else None,
                 "options": self.options, "steps": steps,
@@ -641,6 +660,13 @@ def open_in_file_manager(path: Path) -> None:
 
 
 def make_handler(studio: Studio, token: str):
+    # The page is read once, now: what is served always belongs to the code that is running.
+    page = (ASSETS / "app.html").read_text(encoding="utf-8").replace("{{TOKEN}}", token).replace("{{BUILD}}", studio.build)
+    assets = {"/": (page.encode("utf-8"), "text/html; charset=utf-8"),
+              "/app.js": ((ASSETS / "app.js").read_bytes(), "text/javascript; charset=utf-8"),
+              "/app.css": ((ASSETS / "app.css").read_bytes(), "text/css; charset=utf-8"),
+              "/theme.css": (THEME.read_bytes(), "text/css; charset=utf-8")}
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "MISTER4DStudio"
 
@@ -709,14 +735,10 @@ def make_handler(studio: Studio, token: str):
             if not self._local():
                 return self._send(403, b"forbidden", "text/plain")
             path = unquote(urlparse(self.path).path)
-            if path == "/":
-                page = (ASSETS / "app.html").read_text(encoding="utf-8").replace("{{TOKEN}}", token)
-                return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
-            if path in ("/app.js", "/app.css"):
-                kind = "text/javascript" if path.endswith(".js") else "text/css"
-                return self._send(200, (ASSETS / path[1:]).read_bytes(), f"{kind}; charset=utf-8")
-            if path == "/theme.css":
-                return self._send(200, THEME.read_bytes(), "text/css; charset=utf-8")
+            if path in assets:
+                return self._send(200, *assets[path])
+            if path == "/api/ping":  # lets the launcher find a Studio that is already open
+                return self._json({"app": "mister4d-studio", "build": studio.build})
             if path.startswith("/project/") and studio.project is not None:
                 root = studio.project.resolve()
                 target = (root / path[len("/project/"):]).resolve()
@@ -788,7 +810,7 @@ def serve(port: int = 8420, open_browser: bool = True, project: str | None = Non
     if server is None:
         raise RuntimeError(f"no free port between {port} and {port + 19}")
     url = f"http://127.0.0.1:{server.server_address[1]}/"
-    print(f"MISTER 4D Studio: {url}")
+    print(f"MISTER 4D Studio (versione {studio.build}): {url}")
     print("Lascia aperta questa finestra mentre lavori; per uscire usa il pulsante Esci nella pagina.")
     if open_browser:
         threading.Timer(0.6, webbrowser.open, args=(url,)).start()

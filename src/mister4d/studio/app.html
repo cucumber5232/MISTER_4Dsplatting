@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="studio-token" content="{{TOKEN}}">
+<meta name="studio-build" content="{{BUILD}}">
 <title>MISTER 4D Studio</title>
 <link rel="stylesheet" href="theme.css">
 <link rel="stylesheet" href="app.css">
@@ -238,7 +239,7 @@
       <summary>Come funziona questo passo</summary>
       <dl class="explain">
         <div><dt>Che cosa succede</dt>
-          <dd>Dalle sagome viste dalle camere si ricava prima una forma grezza del soggetto, istante per istante. Poi la scena viene descritta con moltissime piccole macchie colorate e sfumate, le gaussiane, che vengono spostate e corrette migliaia di volte finché le immagini calcolate dal punto di vista di ogni camera assomigliano il più possibile a quelle vere.</dd></div>
+          <dd>Dalle sagome viste dalle camere si ricava prima una forma grezza del soggetto, istante per istante. Poi la scena viene descritta con moltissime piccole macchie colorate e sfumate, le gaussiane, che vengono spostate e corrette migliaia di volte finché le immagini calcolate dal punto di vista di ogni camera assomigliano il più possibile a quelle vere. Lungo il lavoro le macchie che non servono a ricomporre le immagini perdono forza e vengono tolte: la scena resta più pulita vista dai punti in cui non c'era nessuna camera.</dd></div>
         <div><dt>Riprese lunghe</dt>
           <dd>Una ripresa più lunga di circa tre secondi viene ricostruita a spezzoni di due secondi, uno dopo l'altro: così il tempo e la memoria richiesti da ogni spezzone non dipendono dalla durata della ripresa. Il tempo totale cresce in proporzione alla durata.</dd></div>
         <div><dt>Durata e interruzione</dt>
@@ -252,6 +253,8 @@
         toglie informazione. Per il risultato da consegnare scegli «Nessuna».</p>
     </div>
     <div class="check-row"><label class="check"><input type="checkbox" data-option="learn_time_offsets"> <span>Le camere non hanno sincronizzazione hardware: stima gli scarti di tempo tra una e l'altra</span></label><button class="info" type="button" popovertarget="tip-offsets" aria-label="Spiegazione: scarti di tempo tra le camere"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
+    <div class="check-row"><label class="check"><input type="checkbox" data-option="learn_camera_colors">
+      <span>Le camere non rendono i colori allo stesso modo: compensa le differenze</span></label><button class="info" type="button" popovertarget="tip-colors" aria-label="Spiegazione: differenze di colore tra le camere"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></div>
     <fieldset class="field">
       <legend>Peso della scena<button class="info" type="button" popovertarget="tip-weight" aria-label="Spiegazione: peso della scena"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-info"/></svg></button></legend>
       <div class="choices segmented wide" role="radiogroup">
@@ -337,8 +340,10 @@
     <div id="tip-headset" class="panel tip" popover><p>Un visore autonomo disegna molte meno gaussiane di una workstation. Questa versione tiene, in ogni istante, solo quelle che contribuiscono di più all'immagine, poi le ritocca perché facciano anche il lavoro di quelle tolte.</p><p>Il risultato sono due cartelle: scena_visore, da copiare nel progetto Unity (la legge il componente MISTER 4D, nella cartella unity del programma), e player_visore, per guardare la stessa scena nel browser. Richiede un calcolo in più, breve rispetto alla ricostruzione.</p></div>
     <div id="tip-budget" class="panel tip" popover><p>È quante gaussiane il visore deve disegnare nello stesso istante. Più il numero è basso, più la scena è leggera e meno è dettagliata.</p><p>80.000 è un punto di partenza prudente: il valore giusto per il vostro visore va trovato provando.</p></div>
     <div id="tip-ply" class="panel tip" popover><p>Un file .ply per fotogramma, nel formato standard del Gaussian Splatting, leggibile dai programmi e dai motori grafici che lo supportano.</p><p>Sono file non compressi: occupano molto più spazio del player.</p></div>
+    <div id="tip-colors" class="panel tip" popover><p>Camere di modello diverso, o con esposizione e bilanciamento del bianco automatici, vedono lo stesso soggetto con colori un po' diversi. La scena, costretta a dar ragione a tutte, cambia tinta secondo il punto di vista.</p><p>Spuntando la casella il programma stima per ogni camera una correzione di luminosità e di colore, e la scena prende l'aspetto medio delle camere. Meglio ancora è bloccare esposizione e bianco su tutte le camere prima di registrare.</p></div>
 </div>
 
+<div id="notice" class="panel notice" role="status" hidden></div>
 <div id="toast" class="panel toast" role="alert" hidden></div>
 <script src="app.js"></script>
 </body>

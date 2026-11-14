@@ -84,6 +84,8 @@ class TrainConfig:
     lr_times: float = 2e-3  # frames
     lr_durations: float = 5e-3
     lr_time_offsets: float = 5e-3  # frames
+    learn_camera_colors: bool = False  # cameras that do not see the same colours: learn the gains of each
+    lr_camera_colors: float = 5e-3
 
     # --- densification ------------------------------------------------------
     densify: bool = True
@@ -94,6 +96,7 @@ class TrainConfig:
     prune_opacity: float = 0.005
     prune_scale: float = 0.15  # metres; larger Gaussians are removed
     opacity_reset_every: int = 0  # 0 = never (resets hurt with few cameras)
+    opacity_decay: float = 0.005  # share of its opacity a Gaussian loses each time it is drawn (0 = off)
     max_gaussians: int = 2_000_000
 
     # --- runtime ------------------------------------------------------------
@@ -288,9 +291,16 @@ def _initial_points(ds: MultiViewDataset, cfg: TrainConfig, static_frame: int | 
     return xyz, np.full_like(xyz, 0.5), frames, 1
 
 
+def apply_camera_colors(rgb: torch.Tensor, gains: list | None) -> torch.Tensor:
+    """A rendered image as the camera with these learned colour ``gains`` (red, green, blue) sees it."""
+    if not gains:
+        return rgb
+    return rgb * torch.tensor(gains, dtype=rgb.dtype, device=rgb.device)
+
+
 @torch.no_grad()
 def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=False,
-                   time_offsets: dict | None = None) -> dict:
+                   time_offsets: dict | None = None, camera_colors: dict | None = None) -> dict:
     """PSNR against the (masked) ground truth on a white background."""
     values = []
     for cam in cams:
@@ -300,6 +310,7 @@ def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=
             gt, mask = ds.batch(fi, [cam], device)
             rgb, alpha, *_ = render_scene(scene, fi + shift, viewmats, Ks, ds.width, ds.height,
                                           backend=backend, antialiased=antialiased)
+            rgb = apply_camera_colors(rgb, (camera_colors or {}).get(cam))
             if mask is not None:
                 gt = gt * mask + (1.0 - mask)
                 rgb = rgb + (1.0 - alpha)
@@ -309,13 +320,15 @@ def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=
 
 def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                   window: tuple[int, int] | None = None, core: tuple[int, int] | None = None,
-                  fixed_offsets: dict | None = None, start: dict | None = None) -> tuple[Path, dict]:
+                  fixed_offsets: dict | None = None, start: dict | None = None,
+                  fixed_colors: dict | None = None) -> tuple[Path, dict]:
     """One training: the whole take, or the frames ``window`` of a long one.
 
     ``core`` are the frames this scene will be used for (the window without
-    the context at its ends). ``fixed_offsets`` are camera time offsets learned
-    on an earlier segment. ``start`` are the parameters of an existing scene to
-    refine instead of starting from the visual hull (no densification then).
+    the context at its ends). ``fixed_offsets`` and ``fixed_colors`` are the time
+    offsets and the colours of the cameras learned on an earlier segment.
+    ``start`` are the parameters of an existing scene to refine instead of
+    starting from the visual hull (no densification then).
     Returns the checkpoint and its summary.
     """
     out_dir = Path(out_dir)
@@ -384,6 +397,22 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
         offset_opt = torch.optim.Adam([offsets], lr=cfg.lr_time_offsets)
         offset_free = torch.ones(len(train_cams), device=master)
         offset_free[0] = 0.0  # the reference camera defines the clock
+
+    # Colours: cameras differ in exposure and white balance, and a scene fitted to images that
+    # disagree changes tint with the point of view. Every camera gets a gain per channel; the
+    # scene keeps the average look of the cameras (the gains are kept centred on "none").
+    color_gain = color_opt = None  # logarithm of the gains, cameras x channels
+    if fixed_colors:
+        color_gain = torch.tensor([fixed_colors.get(c, [1.0] * 3) for c in train_cams], device=master).log()
+    elif cfg.learn_camera_colors:
+        color_gain = torch.nn.Parameter(torch.zeros(len(train_cams), 3, device=master))
+        color_opt = torch.optim.Adam([color_gain], lr=cfg.lr_camera_colors)
+
+    def learned_colors() -> dict[str, list[float]]:
+        if color_gain is None:
+            return {}
+        gain = color_gain.detach().exp().cpu()
+        return {c: [round(float(v), 5) for v in gain[i]] for i, c in enumerate(train_cams)}
 
     def learned_offsets() -> dict[str, float]:
         if offsets is None:
@@ -472,6 +501,8 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                                     ds.width, ds.height, **options) for i in sel]
         rgb = torch.cat([r[0] for r in renders])
         alpha = torch.cat([r[1] for r in renders])
+        if color_gain is not None:  # as each camera sees it
+            rgb = rgb * color_gain.to(dev)[sel].exp()[:, None, None, :]
         infos = [(r[3], r[4]["active"]) for r in renders]
         if strategy_state is not None:
             for info, _ in infos:
@@ -518,6 +549,23 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                 if step >= iterations // 10:  # once the scene has taken shape
                     offset_opt.step()
                 offset_opt.zero_grad(set_to_none=True)
+            if color_opt is not None:
+                # From the first step: the starting colours are the average of the cameras, so what
+                # each one sees differently shows at once; later the scene would have absorbed it.
+                color_opt.step()
+                color_opt.zero_grad(set_to_none=True)
+                with torch.no_grad():  # no camera is the reference: the scene is their average
+                    color_gain -= color_gain.mean(dim=0, keepdim=True)
+            if cfg.opacity_decay > 0 and start is None:
+                # Every Gaussian that was drawn loses a little opacity: those the images need win it
+                # back at once, those that only fill space the cameras cannot tell apart fade away
+                # and are pruned. (Not when refining a finished scene: there nothing prunes.)
+                with torch.no_grad():
+                    opacity = scene.params["opacities"]
+                    drawn = [a.to(master) for r in results for _, a in r[2] if a is not None]
+                    seen = torch.cat(drawn).unique() if drawn else torch.arange(opacity.shape[0], device=master)
+                    faded = torch.sigmoid(opacity[seen]) * (1.0 - cfg.opacity_decay)
+                    opacity[seen] = torch.logit(faded.clamp(1e-6, 1.0 - 1e-6))
 
             if strategy_state is not None:
                 info = _merge_info([pair for r in results for pair in r[2]], scene.num_gaussians, master)
@@ -541,7 +589,7 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                 if (cfg.eval_every > 0 and step % cfg.eval_every == 0) or last:
                     record["psnr_" + ("holdout" if val_cams else "train")] = round(
                         evaluate_views(scene, ds, eval_frames, eval_cams, master, backends[0],
-                                       cfg.antialiased, learned_offsets())["psnr"], 2)
+                                       cfg.antialiased, learned_offsets(), learned_colors())["psnr"], 2)
                 log_file.write(json.dumps(record) + "\n")
                 log_file.flush()
                 print("[train] " + "  ".join(f"{k}={v}" for k, v in record.items()), flush=True)
@@ -554,6 +602,10 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
         log_file.close()
 
     meta["time_offsets"] = learned_offsets()
+    meta["camera_colors"] = learned_colors()
+    if color_opt is not None:
+        print("[train] learned colour gains (r g b): " + ", ".join(
+            f"{c} " + " ".join(f"{v:.2f}" for v in gain) for c, gain in meta["camera_colors"].items()))
     if offsets is not None:
         ms = 1000.0 / ds.fps
         print("[train] learned time offsets relative to " + train_cams[0] + ": " + ", ".join(
@@ -565,7 +617,7 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
         "iterations": iterations, "seconds": round(time.time() - t_start, 1),
         "gaussians": scene.num_gaussians, "frames": core[1] - core[0], "fps": ds.fps,
         "train_cameras": train_cams, "holdout_cameras": val_cams, "devices": [str(d) for d in devices],
-        "time_offsets": meta["time_offsets"], "coverage": coverage}
+        "time_offsets": meta["time_offsets"], "camera_colors": meta["camera_colors"], "coverage": coverage}
     (out_dir / "train_summary.json").write_text(json.dumps(summary, indent=2))
     print(f"[train] done in {time.time() - t_start:.0f}s -> {ckpt_path}")
     return ckpt_path, summary
@@ -608,11 +660,12 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig, resume: b
         "config": {k: v for k, v in dataclasses.asdict(cfg).items() if k not in _NOT_IN_RESULT}}))
     print(f"[train] long take: {num_frames} frames in {len(segments)} segments", flush=True)
     t_start = time.time()
-    done, summaries, offsets = [], [], None
+    done, summaries, offsets, colors = [], [], None, None
     for i, (first, last) in enumerate(segments):
         seg = segment_dir(out_dir, i)
         window = (max(first - cfg.segment_overlap, 0), min(last + cfg.segment_overlap, num_frames))
-        tag = {**identity, "segment": [first, last], "window": list(window), "fixed_offsets": offsets}
+        tag = {**identity, "segment": [first, last], "window": list(window), "fixed_offsets": offsets,
+               "fixed_colors": colors}
         tag_file, summary_file = seg / "segment.json", seg / "train_summary.json"
         print(f"[train] segment={i + 1}/{len(segments)} frames={first}-{last - 1}", flush=True)
         kept = (resume and (seg / "ckpt.pt").exists() and tag_file.exists() and summary_file.exists()
@@ -623,10 +676,13 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig, resume: b
         else:
             seg.mkdir(parents=True, exist_ok=True)
             tag_file.unlink(missing_ok=True)
-            _, summary = _train_window(data_dir, seg, cfg, window=window, core=(first, last), fixed_offsets=offsets)
+            _, summary = _train_window(data_dir, seg, cfg, window=window, core=(first, last), fixed_offsets=offsets,
+                                       fixed_colors=colors)
             tag_file.write_text(json.dumps(tag, indent=2))
         if i == 0 and cfg.learn_time_offsets:
             offsets = summary["time_offsets"]  # one clock per camera for the whole take
+        if i == 0 and cfg.learn_camera_colors:
+            colors = summary["camera_colors"]  # and one look
         summaries.append(summary)
         done.append({"dir": seg.name, "first": first, "last": last, "gaussians": summary["gaussians"]})
 

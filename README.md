@@ -55,6 +55,11 @@ Verificato in questo repository, su dati sintetici con verità nota
 - calibrazione ChArUco: errore di riproiezione 0,12 px; posizioni delle camere
   entro 5 mm e focali entro lo 0,2% dai valori veri;
 - ricostruzione dinamica: vedi [Risultato della demo](#risultato-della-demo);
+- punti di vista mai visti dalle camere: il decadimento dell'opacità, un'idea
+  presa da lavori del 2025–2026 e riscritta qui, migliora la camera esclusa
+  di 0,2 dB su due scene di prova e ne riduce lo sfarfallio, con qualche
+  Gaussiana in meno. Altre tre idee sono state misurate e scartate (tabella
+  in [docs/PIPELINE.md](docs/PIPELINE.md), "Idee recenti");
 - scarti di sincronizzazione sotto il frame: con due camere sfasate di +0,40 e
   −0,30 frame il training ne ha stimati +0,18 e −0,31 e la qualità è salita
   (IoU della sagoma dalla camera esclusa da 0,78 a 0,80): segno e ordine di
@@ -76,6 +81,10 @@ GPU e senza riprese reali):
   meccanismi hanno test automatici e misure su dati sintetici minuscoli (vedi
   [Riprese lunghe, scene leggere, montaggio, visori](#riprese-lunghe-scene-leggere-montaggio-visori)),
   ma non sono mai stati usati su una ripresa vera;
+- il decadimento dell'opacità e la compensazione dei colori tra camere:
+  misurati solo su prove minuscole su CPU. L'intensità del primo va
+  ricontrollata su GPU (in un training vero agisce più a lungo); la seconda
+  non ha mai visto camere vere;
 - il lettore per Unity: la lettura dei dati e l'ordinamento sono stati
   compilati ed eseguiti fuori da Unity, e i conti dello shader confrontati con
   quelli del player, ma né il componente né lo shader sono mai stati aperti in
@@ -189,6 +198,10 @@ richiuse in «Opzioni avanzate».
   il montaggio e per il visore», si possono chiedere il video del soggetto su
   sfondo trasparente, la versione leggera per visore autonomo e la sequenza
   di file PLY.
+- Sempre nel passo Ricostruzione, due caselle per camere non perfette:
+  una fa stimare gli scarti di tempo tra camere senza sincronizzazione
+  hardware, l'altra le differenze di colore tra camere che non rendono i
+  colori allo stesso modo.
 - Accanto a ogni richiesta una piccola «i» apre la sua spiegazione: che
   cos'è, come prepararla, che cosa succede se è sbagliata. La voce «Come
   funziona questo passo» racconta il resto; nel passo Calibrazione contiene
@@ -209,6 +222,14 @@ richiuse in «Opzioni avanzate».
   GPU) e la pagina lo dice.
 - Nulla esce dal computer: la pagina risponde solo all'indirizzo locale
   `127.0.0.1` e solo a se stessa.
+- Pagina e programma sono sempre della stessa versione. Il file di avvio fa
+  caricare a Python il codice della cartella in cui si trova, qualunque copia
+  sia installata; a ogni avvio il programma installa le librerie che un
+  aggiornamento può aver aggiunto (senza toccare PyTorch e gsplat) e, se è già
+  aperto, mostra quello aperto invece di avviarne un secondo. Se i file
+  cambiano mentre è aperto (un `git pull`), la pagina lo dice e non parte
+  nessun nuovo passo finché non viene riaperto; una pagina rimasta aperta
+  dopo la riapertura si ricarica da sola.
 
 Cartella di un progetto:
 
@@ -248,8 +269,11 @@ Demo eseguita su CPU a 240×135 px, 29 frame, training su 3 camere
 
 | | PSNR soggetto | IoU sagoma | Sfarfallio |
 |---|---|---|---|
-| camera esclusa (nuovo punto di vista) | 21,2 dB | 0,87 | 3,4 |
+| camera esclusa (nuovo punto di vista) | 21,5 dB | 0,87 | 3,3 |
 | camere di training | 35,3 dB | 0,99 | 1,8 |
+
+Prima del decadimento dell'opacità la camera esclusa era a 21,2 dB con
+sfarfallio 3,4; le camere di training non sono cambiate.
 
 Sono numeri di una prova minuscola su CPU: servono a dire che la catena
 funziona da un capo all'altro, non a prevedere la qualità su riprese reali.
@@ -411,6 +435,12 @@ soggetto.
 | leggera (`--frame-step 3`) | 24 228 | 0,4 MB | 21,2 dB / 0,87 / 3,1 | 32,9 dB / 2,5 |
 | per visore (`lighten`, metà delle Gaussiane visibili insieme) | 6 108 | 0,2 MB | 20,7 dB / 0,86 / 3,4 | 32,6 dB / 2,5 |
 
+Queste misure sono state fatte prima di introdurre il decadimento
+dell'opacità, che ora è attivo di default: con esso la scena di riferimento
+passa a 64 679 Gaussiane e 21,1 dB / 0,86 / 3,5 in verifica (34,6 dB / 1,9 in
+training), la leggera a 22 222 Gaussiane e 21,4 dB / 0,87 / 3,0 (32,8 dB /
+2,6). Le altre righe non sono state rimisurate.
+
 Nel formato precedente, che riscriveva le Gaussiane a ogni frame, il player
 della scena di riferimento pesava 3,4 MB. Sono numeri di una prova minuscola,
 con un soggetto che si muove lentamente: dicono che i meccanismi funzionano e
@@ -458,6 +488,11 @@ scelta in [docs/PIPELINE.md](docs/PIPELINE.md).
   residuo. Lo scarto sotto il frame si può far stimare al training
   (`--set learn_time_offsets=true`), ma è una stima: per gesti rapidi resta
   preferibile la sincronizzazione hardware.
+- **Colori.** Camere con esposizione o bianco diversi danno una scena che
+  cambia tinta con il punto di vista. Il training può stimare un guadagno per
+  camera (`--set learn_camera_colors=true`), ma è una stima che richiede un
+  training lungo e non è stata provata su camere vere: resta preferibile
+  bloccare esposizione e bianco su tutte.
 - **Maschere.** Dipendono dal set vuoto: luce o inquadratura che cambiano tra
   le due riprese le rovinano; le ombre nette a terra possono entrare nella
   maschera. Si possono fornire maschere fatte con altri strumenti.
@@ -486,6 +521,7 @@ unity/            componente per Unity (Quest 3) e descrizione del formato per a
 src/mister4d/     pacchetto Python (un modulo per passo della pipeline)
   run.py          lettura di una ripresa ricostruita, intera o a spezzoni
   lighten.py      copia leggera per visori autonomi
+  launch.py       avvio di Studio: librerie, istanza unica, versione
   app.py          MISTER 4D Studio: server locale che guida i passi
   studio/         pagina di MISTER 4D Studio
   viewer/         player WebGL2 e colori condivisi (theme.css)
@@ -517,7 +553,11 @@ mancano, in ordine di peso:
    pezzi ci sono, ma sono collaudati solo su dati sintetici minuscoli: vanno
    misurati tempi, peso e resa su riprese vere di decine di secondi.
 3. **Resa.** Colore che cambia con il punto di vista, capelli e mani, bordi
-   puliti (maschere migliori), stabilità da un fotogramma all'altro.
+   puliti (maschere migliori), stabilità da un fotogramma all'altro. Le idee
+   dei lavori più recenti vengono provate una alla volta e tenute solo se
+   misurate utili ([docs/PIPELINE.md](docs/PIPELINE.md), "Idee recenti"): le
+   prossime, da provare su GPU con riprese vere, sono il riposizionamento
+   delle Gaussiane e la densificazione che tiene conto del tempo.
 4. **Riproduzione.** Un visore o un motore grafico al posto della pagina web.
    La versione leggera della scena e un lettore per Unity pensato per Quest 3
    ([unity/](unity/README.md)) ci sono; il lettore va aperto in Unity e provato

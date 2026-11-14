@@ -20,7 +20,7 @@ from .losses import psnr, ssim
 from .model import render_scene
 from .rasterizer import resolve_backend
 from .run import Run
-from .trainer import pick_device
+from .trainer import apply_camera_colors, pick_device
 
 
 METRICS = ("psnr", "psnr_subject", "ssim", "iou", "flicker", "flicker_at_cuts")
@@ -63,6 +63,8 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
                 shift = take.time_offsets(fi).get(cam, 0.0)  # learned sub-frame offset
                 rgb, alpha, *_ = render_scene(take.scene_at(fi), fi + shift, viewmats, Ks, ds.width, ds.height,
                                               backend=backend, antialiased=antialiased)
+                # A training camera is compared with the scene as that camera sees it.
+                rgb = apply_camera_colors(rgb, take.camera_colors(fi).get(cam))
                 if mask is not None:  # compare subject only, on white
                     gt = gt * mask + (1.0 - mask)
                     pred = (rgb + (1.0 - alpha)).clamp(0, 1)

@@ -112,6 +112,10 @@ class Run:
         """Learned sub-frame offset of every camera, for the segment of ``frame``."""
         return self._load(self.index_of(frame))[1]["meta"].get("time_offsets") or {}
 
+    def camera_colors(self, frame: float) -> dict:
+        """Learned colour gains (red, green, blue) of every training camera, for the segment of ``frame``."""
+        return self._load(self.index_of(frame))[1]["meta"].get("camera_colors") or {}
+
     def is_cut(self, frame: int) -> bool:
         """True for the first frame of every segment but the first: where two trainings meet."""
         return frame in self._starts[1:]

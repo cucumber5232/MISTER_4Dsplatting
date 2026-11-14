@@ -4,6 +4,7 @@
   'use strict';
 
   const TOKEN = document.querySelector('meta[name="studio-token"]').content;
+  const BUILD = document.querySelector('meta[name="studio-build"]').content;  // the version this page belongs to
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -130,20 +131,42 @@
       accept(await request('/api/state'), mine);
       failures = 0;
     } catch {
+      // The program answers but does not know this page: it was closed and opened again.
+      if (await programIsThere()) return realign();
       failures += 1;
       if (failures >= 3) {
         return goodbye('4D Studio non risponde',
-          'Il programma è stato chiuso o si è fermato. Riaprilo con doppio clic su «MISTER 4D Studio», poi ricarica questa pagina.',
-          true);
+          'Il programma è stato chiuso o si è fermato. Riaprilo con doppio clic su «MISTER 4D Studio»: '
+          + 'questa pagina si aggiorna da sola.', true);
       }
     }
     schedule();
+  }
+
+  async function programIsThere() {
+    try { return (await fetch('/api/ping', { cache: 'no-store' })).ok; } catch { return false; }
+  }
+
+  // Take the page of the program that is running now. Not more than once every ten seconds:
+  // a program that keeps failing must not make the page reload forever.
+  function realign() {
+    let last = 0;
+    try { last = Number(sessionStorage.getItem('realignedAt')) || 0; } catch { /* private window */ }
+    if (Date.now() - last < 10000) return schedule();
+    try { sessionStorage.setItem('realignedAt', String(Date.now())); } catch { /* private window */ }
+    location.reload();
+  }
+
+  // After the program has gone, wait for it to come back.
+  function waitForProgram() {
+    setTimeout(async () => { if (await programIsThere()) location.reload(); else waitForProgram(); }, 3000);
   }
 
   function goodbye(title, text, retry) {
     closed = true;
     clearTimeout(timer);
     if ($('.goodbye')) return;
+    waitForProgram();
     document.body.append(el('div', { class: 'goodbye', role: 'alertdialog', 'aria-labelledby': 'goodbyeTitle' },
       el('h2', { id: 'goodbyeTitle', text: title }), el('p', { text }),
       retry && el('div', { class: 'actions', style: 'justify-content:center' },
@@ -238,7 +261,29 @@
 
   // ----------------------------------------------------------------- render
 
+  // Page and program must be the same version. A page left open across a restart of the program
+  // belongs to the old one: it reloads itself, once. A program updated while it is running says so.
+  function inLine(data) {
+    if (data.build && data.build !== BUILD) {
+      let tried = '';
+      try { tried = sessionStorage.getItem('reloadedFor') || ''; } catch { /* private window */ }
+      if (tried !== data.build) {
+        try { sessionStorage.setItem('reloadedFor', data.build); } catch { /* private window */ }
+        location.reload();
+        return false;
+      }
+    }
+    const notice = $('#notice');
+    notice.hidden = !data.update;
+    if (data.update) {
+      notice.textContent = 'È stata installata una versione nuova di MISTER 4D. Per usarla chiudi il programma '
+        + 'con «Esci» e riaprilo: fino ad allora non partono nuovi passi.';
+    }
+    return true;
+  }
+
   function render(data) {
+    if (!inLine(data)) return;
     const before = state;
     state = data;
     const path = state.project ? state.project.path : null;

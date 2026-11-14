@@ -156,6 +156,18 @@ riferimento) insieme alla scena, e lo riporta in frame e millisecondi. È
 pensata per camere senza trigger o genlock; con camere sincronizzate via
 hardware va lasciata spenta.
 
+**Colori delle camere (`learn_camera_colors`).** Camere di modello diverso, o
+con esposizione e bianco automatici, rendono lo stesso soggetto con colori
+diversi, e una scena costretta a dar ragione a tutte cambia tinta secondo il
+punto di vista. Con questa opzione il training impara per ogni camera un
+guadagno per rosso, verde e blu. I guadagni hanno media nulla tra le camere:
+nessuna fa da riferimento e la scena prende l'aspetto medio. Vengono imparati
+dal primo passo, quando i colori di partenza sono ancora la media delle
+camere (più tardi la scena avrebbe già assorbito la differenza), e in una
+ripresa a spezzoni sul primo spezzone, poi riusati. `eval` confronta ogni
+camera usata con la scena vista attraverso il suo guadagno. Con camere uguali
+e impostazioni bloccate va lasciata spenta.
+
 Ottimizzazione (`trainer.py`):
 
 - a ogni passo ogni GPU riceve un istante casuale e alcune camere; perdita
@@ -164,6 +176,13 @@ Ottimizzazione (`trainer.py`):
   - scala: penalità su Gaussiane troppo grandi o troppo allungate;
   - velocità: piccola penalità che impedisce derive lungo le direzioni che
     nessuna camera osserva;
+- decadimento dell'opacità (`opacity_decay`): dopo ogni passo le Gaussiane
+  disegnate in quel passo perdono lo 0,5% della loro opacità. Quelle che
+  servono alle immagini lo riguadagnano subito dal gradiente; quelle che
+  riempiono soltanto lo spazio che le camere non sanno distinguere si spengono
+  e la densificazione le elimina. Non agisce quando si rifinisce una scena già
+  fatta (`lighten`). Misure in
+  [Idee recenti](#idee-recenti-che-cosa-è-stato-provato);
 - densificazione con la strategia di default di gsplat (duplica / dividi /
   elimina) fino al 60% delle iterazioni, con tetto `max_gaussians`;
 - numero di passi automatico: 250 per frame della clip (minimo 7000).
@@ -186,6 +205,8 @@ Opzioni: `configs/default.yaml` e `TrainConfig` in `trainer.py`. Le più utili:
 | `max_gaussians` | 2 000 000 | limite di memoria |
 | `init_duration` | 1.0 | vita iniziale di una Gaussiana, in frame inizializzati |
 | `learn_time_offsets` | false | `true` con camere non sincronizzate via hardware |
+| `learn_camera_colors` | false | `true` con camere che non rendono i colori allo stesso modo |
+| `opacity_decay` | 0.005 | 0.015: meno Gaussiane e punti di vista intermedi più stabili, ma camere usate meno nitide; 0: spento |
 | `init_velocities` | true | velocità iniziali stimate dal moto dei punti |
 | `static` | false | `true`: 3DGS statico di un solo istante (`static_frame`) |
 | `devices` | `auto` | es. `cuda:0` per usare una sola GPU |
@@ -204,8 +225,9 @@ training non dipendono dalla durata, il tetto di Gaussiane (`max_gaussians`)
 vale per spezzone e non per tutta la ripresa, e un lavoro interrotto riparte
 dal primo spezzone mancante. Rilanciando lo stesso comando gli spezzoni già
 fatti con gli stessi dati e le stesse opzioni vengono tenuti (`--fresh` per
-rifarli). Gli scarti di tempo tra camere (`learn_time_offsets`) vengono
-imparati sul primo spezzone e riusati negli altri.
+rifarli). Gli scarti di tempo tra camere (`learn_time_offsets`) e i loro
+colori (`learn_camera_colors`) vengono imparati sul primo spezzone e riusati
+negli altri.
 
 `eval`, `render`, `export` e `lighten` leggono il risultato attraverso
 `run.py` e non distinguono una ripresa intera da una a spezzoni.
@@ -288,6 +310,96 @@ sulla profondità renderizzata, durate iniziali più brevi, rasterizzazione
 antialiasing. Sono prove a bassa risoluzione su CPU: a piena risoluzione su
 GPU alcune potrebbero comportarsi diversamente.
 
+## Idee recenti: che cosa è stato provato
+
+Tra il 2025 e il 2026 sono usciti diversi lavori sul 4D Gaussian Splatting con
+poche camere o con Gaussiane libere nel tempo, la stessa famiglia di questo
+progetto. Le idee che si potevano misurare qui sono state riscritte da zero
+(nessun codice degli autori: vedi [LICENZE.md](LICENZE.md)) e provate una
+alla volta. È rimasto solo ciò che ha migliorato il punto di vista che
+nessuna camera ha visto.
+
+Misure sulla ripresa sintetica della demo (29 frame, 240×135, CPU, 1500
+passi, `cam02` esclusa), scena leggera (`--frame-step 3`). «Verifica» è la
+camera mai vista, «training» la media delle tre usate; PSNR nel riquadro del
+soggetto.
+
+| Variante | Gaussiane | Verifica: PSNR / sfarfallio | Training: PSNR / sfarfallio | Esito |
+|---|---|---|---|---|
+| nessuna | 24 221 | 21,20 dB / 3,14 | 32,93 dB / 2,53 | |
+| decadimento dell'opacità 0,005 | 22 222 | 21,44 dB / 3,04 | 32,77 dB / 2,56 | tenuto, default |
+| decadimento dell'opacità 0,015 | 13 207 | 21,73 dB / 2,89 | 31,99 dB / 2,66 | disponibile |
+| decadimento 0,015 solo finché dura la densificazione | 13 157 | 21,23 dB / 3,04 | 32,53 dB / 2,60 | scartato |
+| vita a sommità piatta | 26 722 | 20,96 dB / 3,23 | 33,33 dB / 2,37 | scartato |
+| vincolo tra frame consecutivi | 25 499 | 21,10 dB / 3,15 | 32,81 dB / 2,48 | scartato |
+| opacità riveduta alla divisione | 24 142 | 21,15 dB / 3,13 | 32,87 dB / 2,53 | scartato |
+
+Sulla scena di riferimento (una nuvola di partenza per frame) il decadimento
+0,005 porta la verifica da 20,85 dB / 3,58 a 21,07 dB / 3,47 e lascia il
+training dov'era (da 34,49 dB / 1,92 a 34,56 dB / 1,94), con 64 679 Gaussiane
+invece di 65 368.
+
+**Decadimento dell'opacità (tenuto).** Lo spunto è *4C4D: 4 Camera 4D Gaussian
+Splatting* (Zhou e altri, CVPR 2026): con poche camere imparare la geometria è
+più difficile che imparare l'aspetto, e attenuare l'opacità delle Gaussiane
+sposta l'ottimizzazione verso la geometria. Lì l'attenuazione è decisa da una
+piccola rete e trattata in modo diverso per le Gaussiane visibili e non
+visibili. Nella stessa direzione va la regolarizzazione dell'opacità di
+*FreeTimeGS* (Wang e altri, CVPR 2025). Qui non c'è nessuna rete: una quota
+fissa tolta, dopo ogni passo, alle sole Gaussiane disegnate in quel passo. Il
+guadagno con 0,005 (+0,2 dB) è poco sopra il rumore di queste prove (le
+varianti che non cambiano nulla si muovono di circa 0,1 dB), ma ha lo stesso
+segno su due scene, cresce con l'intensità e si accompagna a meno sfarfallio.
+Con 0,015 le Gaussiane si dimezzano quasi e la camera mai vista migliora
+ancora, ma le camere usate perdono 1 dB: è un compromesso, lasciato come
+opzione. Fermare il decadimento insieme alla densificazione annulla il
+guadagno: non agisce quindi solo eliminando Gaussiane, ma come freno
+all'adattamento eccessivo alle camere usate, fino alla fine. In un training
+vero ogni Gaussiana viene disegnata circa cinque volte più spesso che in
+queste prove, quindi l'effetto di una stessa quota sarà più forte: il valore
+va ricontrollato su GPU con riprese vere.
+
+**Vita a sommità piatta (scartata).** *SharpTimeGS* (Liao e altri, CVPR 2026)
+sostituisce la campana che regola l'opacità nel tempo con un profilo piatto e
+dai fianchi ripidi, così una Gaussiana resta piena per tutta la sua vita. Qui
+è stato provato alzando l'esponente della campana da 2 a 4: le camere usate
+migliorano (+0,4 dB, meno sfarfallio), la camera mai vista peggiora (−0,24
+dB). Con poche camere una Gaussiana che resta piena più a lungo viene
+adattata meglio a ciò che le camere vedono e peggio a ciò che non vedono.
+Avrebbe richiesto anche di cambiare il formato, il player e il lettore per
+Unity, che conoscono solo la campana.
+
+**Vincolo tra frame consecutivi (scartato).** Rendere due frame consecutivi
+nello stesso passo e chiedere che la loro differenza sia quella delle
+riprese. Nessun guadagno misurabile, training del 70% più lento.
+
+**Opacità riveduta alla divisione (scartata).** La correzione dell'opacità
+delle Gaussiane divise o duplicate proposta in *Revising Densification in
+Gaussian Splatting* (Rota Bulò e altri, ECCV 2024), che gsplat mette a
+disposizione. Nessun effetto.
+
+**Colori delle camere (tenuto come opzione).** Non viene da un lavoro
+recente: compensare esposizione e bianco per camera è pratica nota. Misura su
+una prova minuscola (5 frame, 96×72), con una camera resa più calda (rosso
+×1,25, blu ×0,80): con 450 passi i guadagni trovati per quella camera
+rispetto alla vicina sono 1,21 e 0,86, e la differenza di tinta della scena
+tra i quattro punti di vista scende da 0,15 a 0,06; con 150 passi la
+correzione è a metà strada e la tinta non cambia ancora in modo misurabile.
+Serve quindi un training lungo, come sono quelli veri; non è stata provata su
+camere vere.
+
+**Non provate.** Il riposizionamento periodico delle Gaussiane poco opache
+verso le zone che ne hanno bisogno (*FreeTimeGS*; 3DGS-MCMC): in queste prove
+il tetto di Gaussiane non viene raggiunto, quindi non ci sarebbe nulla da
+ridistribuire. La densificazione che tiene conto del tempo (*Temporally Aware
+Densification*, 2026) e la modulazione del moto con la durata (*SharpTimeGS*):
+per misurarle servono riprese con movimenti rapidi. Sono le prime da provare
+sulla workstation.
+
+Riferimenti: 4C4D, arXiv 2604.04063; FreeTimeGS, arXiv 2506.05348;
+SharpTimeGS, arXiv 2602.02989; Temporally Aware Densification, arXiv
+2606.23212.
+
 ## Formato del player
 
 ```
@@ -365,6 +477,11 @@ la parte in C# che legge i blocchi, sceglie e ordina le Gaussiane, compilata
 ed eseguita con mono quando è installato (altrimenti il test viene saltato) e
 confrontata con l'esportatore; i conti di proiezione dello shader, trascritti
 e confrontati con la camera di riferimento.
+
+`tests/test_launch.py` copre l'avvio di Studio: lettura e controllo delle
+librerie richieste, riconoscimento di uno Studio già aperto, identità del
+codice (cambia quando cambia un file del programma), pagina servita sempre
+dalla versione in esecuzione e rifiuto di nuovi passi dopo un aggiornamento.
 
 `tests/test_app.py` copre il server di MISTER 4D Studio: ogni comando che la
 pagina può chiedere viene fatto leggere al parser della riga di comando (le
