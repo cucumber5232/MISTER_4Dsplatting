@@ -3,9 +3,9 @@
 Un componente che riproduce in Unity una scena esportata da MISTER 4D, pensato
 per girare su un visore autonomo.
 
-> **Stato: non ancora aperto in Unity né provato su un visore.** È stato
-> scritto senza Unity a disposizione. Qui sotto c'è che cosa è stato
-> verificato lo stesso e che cosa resta da verificare alla prima apertura.
+Non è ancora stato aperto in Unity né provato su un visore, perché è stato
+scritto senza Unity a disposizione. Più sotto c'è che cosa è stato verificato
+comunque e che cosa controllare alla prima apertura.
 
 ## Che cosa c'è
 
@@ -16,7 +16,7 @@ unity/Mister4D/
   Resources/MisterSplat4D.shader  il disegno
 ```
 
-Nessuna dipendenza: né pacchetti, né codice di terzi.
+Non ha dipendenze.
 
 ## Come si usa
 
@@ -37,7 +37,7 @@ Nessuna dipendenza: né pacchetti, né codice di terzi.
 4. Copiare la cartella ottenuta in `Assets/StreamingAssets/` (creare
    `StreamingAssets` se non c'è).
 5. In una scena: oggetto vuoto → *Add Component* → *MISTER 4D* → *Player*.
-   Nel campo **Folder** scrivere il nome della cartella (`scena_visore`).
+   Nel campo Folder scrivere il nome della cartella (`scena_visore`).
 6. Premere Play.
 
 L'oggetto è il soggetto: si sposta, si ruota e si scala come qualunque altro.
@@ -55,51 +55,50 @@ fotogramma; `Error` dice che cosa non ha funzionato.
   funzionalità Meta Quest.
 - Grafica: Vulkan oppure OpenGL ES 3. Rendering stereo: Multiview.
 - Spazio colore: Linear o Gamma, lo shader ne tiene conto.
-- Quante Gaussiane: il numero che conta è quante sono visibili insieme
-  (`--budget`). Chi ha misurato altri lettori Unity su Quest 3 autonomo riporta
-  72 fotogrammi al secondo con 50–100 mila Gaussiane e circa 59 con 200 mila
-  ([SplatXR](https://radiancefields.com/splatxr-brings-interactive-gaussian-splats-to-quest-3)):
+- Quante Gaussiane: conta quante sono visibili insieme (`--budget`). Su Quest
+  3 autonomo sono stati riportati 72 fotogrammi al secondo con 50–100 mila
+  Gaussiane e circa 59 con 200 mila
+  ([SplatXR](https://radiancefields.com/splatxr-brings-interactive-gaussian-splats-to-quest-3)).
   80 mila è un punto di partenza, da correggere guardando `VisibleNow` e i
   fotogrammi al secondo sul visore.
 
-## Che cosa è stato verificato, e come
+## Che cosa è stato verificato
 
 Con `pytest tests/test_unity.py` dalla cartella principale:
 
 - la cartella esportata per i motori grafici contiene gli stessi byte del
   player web, già collaudato in un browser;
-- `Mister4DChunk.cs` è stato compilato ed eseguito fuori da Unity (con mono)
-  su scene esportate davvero: per ogni istante sceglie le stesse Gaussiane che
-  l'esportatore dichiara visibili, e le ordina da dietro in avanti;
+- `Mister4DChunk.cs` è stato compilato ed eseguito fuori da Unity, con mono,
+  su scene esportate. Per ogni istante sceglie le stesse Gaussiane che
+  l'esportatore dichiara visibili e le ordina da dietro in avanti;
 - i conti dello shader (posizione sullo schermo e forma di ogni Gaussiana,
-  scambio degli assi tra il sistema delle riprese e quello di Unity) sono stati
-  trascritti riga per riga e confrontati con la camera usata dal resto del
-  programma: coincidono.
+  scambio degli assi tra il sistema delle riprese e quello di Unity) sono
+  stati trascritti riga per riga e danno gli stessi risultati della camera
+  usata dal resto del programma.
 
-Inoltre `Mister4DPlayer.cs` è stato controllato dal compilatore contro una
-copia ridotta, scritta a mano, delle funzioni di Unity che usa: dice che il
-codice è coerente con sé stesso, non che quelle funzioni si comportino come
-previsto.
+`Mister4DPlayer.cs` è stato compilato contro una copia ridotta, scritta a
+mano, delle funzioni di Unity che usa. Questo controlla solo che il codice sia
+coerente. Come si comportano quelle funzioni in Unity resta da vedere.
 
-## Che cosa resta da verificare
+## Che cosa controllare alla prima apertura
 
-Alla prima apertura, in quest'ordine. Per ogni punto che non torna serve il
-testo dell'errore oppure una foto di quello che si vede.
+In quest'ordine. Per ogni punto che non torna serve il testo dell'errore
+oppure una foto di quello che si vede.
 
-1. **Compila?** Nessun errore nella Console di Unity, né dagli script né dallo
+1. Compila? Nessun errore nella Console di Unity, né dagli script né dallo
    shader.
-2. **Si vede il soggetto?** In piedi, non sdraiato né specchiato, e delle
+2. Si vede il soggetto? In piedi, non sdraiato né specchiato, e delle
    dimensioni giuste.
-3. **L'ordine è giusto?** Girandogli intorno, le parti dietro non devono
+3. L'ordine è giusto? Girandogli intorno, le parti dietro non devono
    apparire davanti.
-4. **Stereo.** Sul visore le due lenti devono mostrare la stessa scena, con la
+4. Stereo. Sul visore le due lenti devono mostrare la stessa scena, con la
    giusta profondità.
-5. **Colori.** Né slavati né troppo scuri rispetto al player web.
-6. **Fluidità.** Fotogrammi al secondo sul visore, insieme a `VisibleNow`.
-7. **Passaggi tra spezzoni.** Nelle riprese lunghe, nessuno scatto ogni due
+5. Colori. Né slavati né troppo scuri rispetto al player web.
+6. Fluidità. Fotogrammi al secondo sul visore, insieme a `VisibleNow`.
+7. Passaggi tra spezzoni. Nelle riprese lunghe, nessuno scatto ogni due
    secondi.
 
-## Limiti noti
+## Limiti
 
 - Il colore non cambia con il punto di vista.
 - Scelta e ordinamento delle Gaussiane avvengono sul processore, nel thread
@@ -107,10 +106,10 @@ testo dell'errore oppure una foto di quello che si vede.
 - La scena non riceve luci né ombre: ha la luce delle riprese.
 - Rispetto ad altri oggetti trasparenti l'ordine è deciso oggetto per oggetto.
 
-## Il formato, per chi vuole leggerlo altrove (Unreal)
+## Il formato
 
-Per Unreal non c'è ancora un lettore. Il formato è lo stesso ed è volutamente
-semplice.
+Per Unreal non c'è ancora un lettore. Chi vuole scriverne uno trova qui il
+formato, che è lo stesso.
 
 `scene.json` contiene solo numeri, testi ed elenchi di numeri: fotogrammi,
 fotogrammi al secondo, soglia di opacità (`min_opacity`) e, per ogni blocco,

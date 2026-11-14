@@ -1,4 +1,4 @@
-# Pipeline: come funziona e che cosa produce
+# Pipeline
 
 Riferimento tecnico per chi sviluppa. Per l'uso passo passo vedere il README;
 per le riprese `SESSIONE_DI_RIPRESA.md`.
@@ -17,21 +17,21 @@ video per camera ──ingest──► frame allineati ──calibrate──► 
                                  eval · render · export ──► player web / .ply
 ```
 
-Ogni passo legge e scrive cartelle esplicite: si può rifare un passo senza
-rifare gli altri, e sostituire un passo con uno strumento esterno purché
-rispetti il formato (per esempio maschere fatte con un altro software).
+Ogni passo legge e scrive cartelle sue. Si può rifare un passo senza rifare
+gli altri, oppure sostituirlo con uno strumento esterno che rispetti il
+formato, per esempio maschere fatte con un altro software.
 
-## Convenzioni (uniche per tutto il progetto)
+## Convenzioni
 
 Scritte anche dentro ogni `calibration.json`.
 
 | Grandezza | Convenzione |
 |---|---|
 | Unità | metri |
-| Mondo | destrorso, **+Z verso l'alto** |
+| Mondo | destrorso, +Z verso l'alto |
 | Camera | OpenCV: x a destra, y in basso, z in avanti |
 | Estrinseci | mondo → camera: `x_cam = R · x_mondo + t` |
-| Intrinseci `K` | pixel OpenCV: il **centro** del pixel in alto a sinistra è (0, 0) |
+| Intrinseci `K` | pixel OpenCV: il centro del pixel in alto a sinistra è (0, 0) |
 | Distorsione | OpenCV `(k1, k2, p1, p2, k3)` |
 | Quaternioni | `w, x, y, z` |
 | Tempo | indice del frame nella clip (anche frazionario) |
@@ -42,21 +42,21 @@ conversione di mezzo pixel del punto principale avviene in un solo punto
 
 ## I passi
 
-### `ingest` — controllo dei file, tempo comune, frame
+### `ingest`: controllo dei file, tempo comune, frame
 
 - `ffprobe` legge risoluzione, frame rate, codec e il timestamp di
   presentazione di ogni frame.
-- Ogni frame riceve un indice su una **linea del tempo comune** ricavato dal
-  timestamp (non dall'ordine di arrivo) più lo scostamento della camera.
+- Ogni frame riceve un indice su una linea del tempo comune, ricavato dal
+  timestamp più lo scostamento della camera.
 - Scostamenti: correlazione incrociata delle tracce audio (`--sync audio`),
   salto di luminosità (`--sync flash`) o valori manuali. L'errore residuo sotto
-  il frame viene riportato, non nascosto.
-- Un frame mancante lascia un buco nell'indice: l'istante viene escluso per
+  il frame viene riportato.
+- Un frame mancante lascia un buco nell'indice. L'istante viene escluso per
   tutte le camere e segnalato.
 - Uscita: `frames/<cam>/<indice>.jpg` e `ingest.json` (checksum SHA-256 degli
   originali, scostamenti, frame mancanti, avvisi).
 
-### `calibrate` — intrinseci, estrinseci, sistema mondo
+### `calibrate`: intrinseci, estrinseci, sistema mondo
 
 1. Rilevamento ChArUco in ogni frame di ogni camera (OpenCV).
 2. Intrinseci e distorsione per camera (`cv2.calibrateCamera`; di default due
@@ -79,7 +79,7 @@ Uscita: `calibration.json` con camere, volume di cattura e un `report` (RMS
 complessivo e per camera, frame condivisi per coppia, copertura, versione
 OpenCV).
 
-### `prepare` — dataset pronto per il training
+### `prepare`: dataset pronto per il training
 
 - Undistort (una sola volta: il file risultante è marcato `undistorted` e ha
   distorsione nulla) e ridimensionamento con intrinseci aggiornati.
@@ -96,15 +96,15 @@ dataset/
   init_points.ply             punti iniziali di ogni frame (da `init`)
 ```
 
-### `masks` — soggetto / sfondo
+### `masks`: soggetto / sfondo
 
 Differenza dal fondale pulito, soglia, soppressione delle ombre (pixel più
 scuri ma con la stessa tinta del fondale), pulizia morfologica, componenti
-connesse. Scrive `masks_preview.jpg`: **va guardato prima del training**.
+connesse. Scrive `masks_preview.jpg`, da guardare prima del training.
 
-### `init` — visual hull, frame per frame
+### `init`: visual hull, frame per frame
 
-Per **ogni frame**: i voxel (1,5 cm) attorno al soggetto vengono confrontati
+Per ogni frame i voxel (1,5 cm) attorno al soggetto vengono confrontati
 con le sagome di tutte le camere e restano quelli che cadono dentro tutte. I
 voxel di superficie diventano i punti iniziali di quell'istante, colorati con
 la media delle camere. Le camere sono fisse, quindi la proiezione di ogni
@@ -115,9 +115,9 @@ Usare `--exclude` per le camere che verranno tenute fuori dal training,
 altrimenti la valutazione non è indipendente. `--points` fissa il numero
 totale di punti (default 600 000, ripartiti sui frame).
 
-### `train` — scena dinamica
+### `train`: scena dinamica
 
-Rappresentazione (`model.py`): **Gaussiane locali nel tempo**. Ogni Gaussiana
+Rappresentazione (`model.py`): Gaussiane locali nel tempo. Ogni Gaussiana
 è una normale Gaussiana 3D (posizione, rotazione, scala, opacità, colore SH)
 con tre attributi temporali:
 
@@ -128,45 +128,41 @@ con tre attributi temporali:
 
 Al frame `f` la scena è l'insieme delle Gaussiane vive in `f`, ciascuna
 spostata di `velocità × (f − istante)` e attenuata dal proprio peso temporale.
-Non c'è nulla da inseguire lungo la clip: un arto veloce è descritto da
-Gaussiane che vivono pochi frame, ognuna nata dal visual hull del suo istante;
-le parti ferme possono essere descritte da Gaussiane longeve. Tutti i frame
-sono ottimizzati insieme e Gaussiane di istanti vicini si sovrappongono nel
-tempo, il che attenua gli sfarfallii tipici di una sequenza di 3DGS
-indipendenti.
+Un arto veloce è descritto da Gaussiane che vivono pochi frame, ognuna nata
+dal visual hull del suo istante. Le parti ferme possono essere descritte da
+Gaussiane che durano di più. Tutti i frame sono ottimizzati insieme e le
+Gaussiane di istanti vicini si sovrappongono nel tempo, cosa che riduce lo
+sfarfallio.
 
-> Durante lo sviluppo è stata provata anche la rappresentazione "Gaussiane
-> canoniche + rete di deformazione": con poche camere seguiva bene i moti
-> piccoli ma perdeva gli arti in moto rapido (l'ottimizzatore trova più
-> economico spegnerli che spostarli). È il motivo della scelta attuale; resta
-> una strada per il futuro, con vincoli aggiuntivi (vedi roadmap nel README).
+È stata provata anche la rappresentazione con Gaussiane canoniche e una rete
+di deformazione. Con poche camere seguiva bene i moti piccoli ma perdeva gli
+arti in moto rapido, perché all'ottimizzatore costa meno spegnerli che
+spostarli.
 
-Le velocità non partono da zero: ogni frame ha una nuvola di punti propria, e
-lo spostamento verso il punto più vicino del frame successivo e precedente
-dice come si è mossa la superficie lungo la normale (`estimate_velocities`).
+Le velocità non partono da zero. Ogni frame ha la sua nuvola di punti, e lo
+spostamento verso il punto più vicino del frame successivo e precedente dice
+come si è mossa la superficie lungo la normale (`estimate_velocities`).
 Sui dati sintetici questo riduce di circa un terzo lo scarto tra i punti di un
 frame e la superficie del frame dopo nelle parti in moto (95° percentile da 9,6
 a 6,8 cm).
 
-**Sincronizzazione sotto il frame (`learn_time_offsets`).** Il modello è
-continuo nel tempo, quindi una camera che ha esposto con una frazione di frame
-di ritardo può essere renderizzata esattamente a quell'istante. Con questa
-opzione il training impara uno scarto temporale per camera (la prima fa da
-riferimento) insieme alla scena, e lo riporta in frame e millisecondi. È
-pensata per camere senza trigger o genlock; con camere sincronizzate via
-hardware va lasciata spenta.
+Sincronizzazione sotto il frame (`learn_time_offsets`). Il modello è continuo
+nel tempo, quindi una camera che ha esposto con una frazione di frame di
+ritardo può essere disegnata a quell'istante. Con questa opzione il training
+impara uno scarto di tempo per camera insieme alla scena (la prima camera fa
+da riferimento) e lo riporta in frame e millisecondi. Serve per camere senza
+trigger o genlock. Con camere sincronizzate via hardware va lasciata spenta.
 
-**Colori delle camere (`learn_camera_colors`).** Camere di modello diverso, o
-con esposizione e bianco automatici, rendono lo stesso soggetto con colori
-diversi, e una scena costretta a dar ragione a tutte cambia tinta secondo il
-punto di vista. Con questa opzione il training impara per ogni camera un
-guadagno per rosso, verde e blu. I guadagni hanno media nulla tra le camere:
-nessuna fa da riferimento e la scena prende l'aspetto medio. Vengono imparati
-dal primo passo, quando i colori di partenza sono ancora la media delle
-camere (più tardi la scena avrebbe già assorbito la differenza), e in una
-ripresa a spezzoni sul primo spezzone, poi riusati. `eval` confronta ogni
-camera usata con la scena vista attraverso il suo guadagno. Con camere uguali
-e impostazioni bloccate va lasciata spenta.
+Colori delle camere (`learn_camera_colors`). Camere di modello diverso, o con
+esposizione e bianco automatici, rendono lo stesso soggetto con colori
+diversi, e la scena cambia tinta secondo il punto di vista. Con questa
+opzione il training impara per ogni camera un guadagno per rosso, verde e
+blu. I guadagni hanno media nulla tra le camere, quindi la scena prende
+l'aspetto medio. Vengono imparati dal primo passo, quando i colori di
+partenza sono ancora la media delle camere. In una ripresa a spezzoni vengono
+imparati sul primo e riusati negli altri. `eval` confronta ogni camera usata
+con la scena vista attraverso il suo guadagno. Con camere uguali e
+impostazioni bloccate va lasciata spenta.
 
 Ottimizzazione (`trainer.py`):
 
@@ -177,17 +173,16 @@ Ottimizzazione (`trainer.py`):
   - velocità: piccola penalità che impedisce derive lungo le direzioni che
     nessuna camera osserva;
 - decadimento dell'opacità (`opacity_decay`): dopo ogni passo le Gaussiane
-  disegnate in quel passo perdono lo 0,5% della loro opacità. Quelle che
-  servono alle immagini lo riguadagnano subito dal gradiente; quelle che
-  riempiono soltanto lo spazio che le camere non sanno distinguere si spengono
-  e la densificazione le elimina. Non agisce quando si rifinisce una scena già
-  fatta (`lighten`). Misure in
-  [Idee recenti](#idee-recenti-che-cosa-è-stato-provato);
+  disegnate in quel passo perdono lo 0,5% dell'opacità. Quelle che servono
+  alle immagini lo riprendono subito dal gradiente. Le altre si spengono e
+  vengono eliminate dalla densificazione. Non agisce quando si rifinisce una
+  scena già fatta (`lighten`). Le misure sono in
+  [Idee recenti](#idee-recenti);
 - densificazione con la strategia di default di gsplat (duplica / dividi /
   elimina) fino al 60% delle iterazioni, con tetto `max_gaussians`;
 - numero di passi automatico: 250 per frame della clip (minimo 7000).
 
-**Multi-GPU.** I parametri vivono sulla prima GPU. A ogni passo ciascuna GPU
+Multi-GPU. I parametri stanno sulla prima GPU. A ogni passo ciascuna GPU
 riceve una copia differenziabile dei parametri, renderizza un batch diverso e
 restituisce la propria perdita; un solo `backward` riporta i gradienti di
 tutte le GPU al proprietario. Con due GPU ogni passo vede il doppio delle
@@ -219,10 +214,9 @@ spezzone è un training a sé in `run/seg_000`, `seg_001`, …; `run/run.json` l
 elenca. Ogni spezzone vede anche `segment_overlap` frame oltre i propri
 estremi, così i frame di confine hanno lo stesso contesto degli altri.
 
-Perché: il modello non ha comunque memoria lunga (una Gaussiana vive pochi
-frame), quindi dividere non toglie nulla; in cambio memoria e tempo di ogni
-training non dipendono dalla durata, il tetto di Gaussiane (`max_gaussians`)
-vale per spezzone e non per tutta la ripresa, e un lavoro interrotto riparte
+Una Gaussiana vive pochi frame, quindi dividere la ripresa non toglie nulla.
+Memoria e tempo di ogni training non dipendono più dalla durata, il tetto di
+Gaussiane (`max_gaussians`) vale per spezzone, e un lavoro interrotto riparte
 dal primo spezzone mancante. Rilanciando lo stesso comando gli spezzoni già
 fatti con gli stessi dati e le stesse opzioni vengono tenuti (`--fresh` per
 rifarli). Gli scarti di tempo tra camere (`learn_time_offsets`) e i loro
@@ -294,12 +288,12 @@ Camere una di fronte all'altra contano una volta sola: vedono la stessa sagoma.
 | 9 camere ogni 40° (9 linee di vista) | 20° | +1,5% |
 
 `calibrate` e `train` stampano questo valore per il rig in uso, ed è la
-spiegazione principale di ciò che si vede da una camera esclusa: nelle prove
-di sviluppo nessuna variante dell'ottimizzazione ha ridotto quell'errore, la
-disposizione delle camere sì. Due conseguenze pratiche: conviene distribuire
-le linee di vista su 180° senza coppie esattamente opposte (le camere rialzate
-e sfalsate della guida servono anche a questo), e una camera tenuta fuori dal
-training va scelta sapendo che lascia un buco dove stava.
+spiegazione principale di ciò che si vede da una camera esclusa. Nelle prove
+nessuna variante dell'ottimizzazione ha ridotto quell'errore, mentre cambiare
+la disposizione delle camere lo riduce. Conviene quindi distribuire le linee
+di vista su 180° senza coppie esattamente opposte, come fanno le camere
+rialzate e sfalsate della guida. Una camera tenuta fuori dal training lascia
+un buco dove stava.
 
 ### Che cosa è stato provato e scartato
 
@@ -310,18 +304,16 @@ sulla profondità renderizzata, durate iniziali più brevi, rasterizzazione
 antialiasing. Sono prove a bassa risoluzione su CPU: a piena risoluzione su
 GPU alcune potrebbero comportarsi diversamente.
 
-## Idee recenti: che cosa è stato provato
+## Idee recenti
 
 Tra il 2025 e il 2026 sono usciti diversi lavori sul 4D Gaussian Splatting con
-poche camere o con Gaussiane libere nel tempo, la stessa famiglia di questo
-progetto. Le idee che si potevano misurare qui sono state riscritte da zero
-(nessun codice degli autori: vedi [LICENZE.md](LICENZE.md)) e provate una
-alla volta. È rimasto solo ciò che ha migliorato il punto di vista che
-nessuna camera ha visto.
+poche camere. Alcune loro idee sono state riscritte qui da zero, senza usare
+il codice degli autori (vedi [LICENZE.md](LICENZE.md)), e provate una alla
+volta. È rimasta quella che migliora la camera esclusa.
 
-Misure sulla ripresa sintetica della demo (29 frame, 240×135, CPU, 1500
-passi, `cam02` esclusa), scena leggera (`--frame-step 3`). «Verifica» è la
-camera mai vista, «training» la media delle tre usate; PSNR nel riquadro del
+Prove sulla ripresa della demo (29 frame, 240×135, CPU, 1500 passi, `cam02`
+esclusa), scena leggera (`--frame-step 3`). «Verifica» è la camera esclusa,
+«training» la media delle tre usate. Il PSNR è misurato nel riquadro del
 soggetto.
 
 | Variante | Gaussiane | Verifica: PSNR / sfarfallio | Training: PSNR / sfarfallio | Esito |
@@ -335,69 +327,68 @@ soggetto.
 | opacità riveduta alla divisione | 24 142 | 21,15 dB / 3,13 | 32,87 dB / 2,53 | scartato |
 
 Sulla scena di riferimento (una nuvola di partenza per frame) il decadimento
-0,005 porta la verifica da 20,85 dB / 3,58 a 21,07 dB / 3,47 e lascia il
-training dov'era (da 34,49 dB / 1,92 a 34,56 dB / 1,94), con 64 679 Gaussiane
-invece di 65 368.
+0,005 porta la verifica da 20,85 dB / 3,58 a 21,07 dB / 3,47. Il training
+resta uguale (da 34,49 a 34,56 dB) e le Gaussiane passano da 65 368 a 64 679.
 
-**Decadimento dell'opacità (tenuto).** Lo spunto è *4C4D: 4 Camera 4D Gaussian
-Splatting* (Zhou e altri, CVPR 2026): con poche camere imparare la geometria è
-più difficile che imparare l'aspetto, e attenuare l'opacità delle Gaussiane
-sposta l'ottimizzazione verso la geometria. Lì l'attenuazione è decisa da una
-piccola rete e trattata in modo diverso per le Gaussiane visibili e non
-visibili. Nella stessa direzione va la regolarizzazione dell'opacità di
-*FreeTimeGS* (Wang e altri, CVPR 2025). Qui non c'è nessuna rete: una quota
-fissa tolta, dopo ogni passo, alle sole Gaussiane disegnate in quel passo. Il
-guadagno con 0,005 (+0,2 dB) è poco sopra il rumore di queste prove (le
-varianti che non cambiano nulla si muovono di circa 0,1 dB), ma ha lo stesso
-segno su due scene, cresce con l'intensità e si accompagna a meno sfarfallio.
-Con 0,015 le Gaussiane si dimezzano quasi e la camera mai vista migliora
-ancora, ma le camere usate perdono 1 dB: è un compromesso, lasciato come
-opzione. Fermare il decadimento insieme alla densificazione annulla il
-guadagno: non agisce quindi solo eliminando Gaussiane, ma come freno
-all'adattamento eccessivo alle camere usate, fino alla fine. In un training
-vero ogni Gaussiana viene disegnata circa cinque volte più spesso che in
-queste prove, quindi l'effetto di una stessa quota sarà più forte: il valore
-va ricontrollato su GPU con riprese vere.
+### Decadimento dell'opacità
 
-**Vita a sommità piatta (scartata).** *SharpTimeGS* (Liao e altri, CVPR 2026)
-sostituisce la campana che regola l'opacità nel tempo con un profilo piatto e
-dai fianchi ripidi, così una Gaussiana resta piena per tutta la sua vita. Qui
-è stato provato alzando l'esponente della campana da 2 a 4: le camere usate
-migliorano (+0,4 dB, meno sfarfallio), la camera mai vista peggiora (−0,24
-dB). Con poche camere una Gaussiana che resta piena più a lungo viene
-adattata meglio a ciò che le camere vedono e peggio a ciò che non vedono.
-Avrebbe richiesto anche di cambiare il formato, il player e il lettore per
-Unity, che conoscono solo la campana.
+Tenuto, attivo di default. L'idea viene da *4C4D: 4 Camera 4D Gaussian
+Splatting* (Zhou e altri, CVPR 2026): con poche camere la geometria si impara
+peggio dell'aspetto, e attenuare l'opacità delle Gaussiane aiuta la geometria.
+In quell'articolo l'attenuazione è calcolata da una piccola rete. Anche
+*FreeTimeGS* (Wang e altri, CVPR 2025) penalizza l'opacità. Qui dopo ogni
+passo si toglie una quota fissa alle Gaussiane disegnate in quel passo.
 
-**Vincolo tra frame consecutivi (scartato).** Rendere due frame consecutivi
-nello stesso passo e chiedere che la loro differenza sia quella delle
-riprese. Nessun guadagno misurabile, training del 70% più lento.
+Con 0,005 il guadagno è di 0,2 dB. È poco sopra il rumore di queste prove,
+circa 0,1 dB, ma va nella stessa direzione su due scene, cresce con la quota
+e lo sfarfallio cala. Con 0,015 le Gaussiane quasi si dimezzano e la camera
+esclusa migliora ancora, ma le camere usate perdono 1 dB. Fermare il
+decadimento quando finisce la densificazione annulla il guadagno.
 
-**Opacità riveduta alla divisione (scartata).** La correzione dell'opacità
-delle Gaussiane divise o duplicate proposta in *Revising Densification in
-Gaussian Splatting* (Rota Bulò e altri, ECCV 2024), che gsplat mette a
-disposizione. Nessun effetto.
+In un training vero ogni Gaussiana viene disegnata circa cinque volte più
+spesso che in queste prove, quindi la stessa quota avrà un effetto più forte.
+Il valore va ricontrollato su GPU con riprese vere.
 
-**Colori delle camere (tenuto come opzione).** Non viene da un lavoro
-recente: compensare esposizione e bianco per camera è pratica nota. Misura su
-una prova minuscola (5 frame, 96×72), con una camera resa più calda (rosso
-×1,25, blu ×0,80): con 450 passi i guadagni trovati per quella camera
-rispetto alla vicina sono 1,21 e 0,86, e la differenza di tinta della scena
-tra i quattro punti di vista scende da 0,15 a 0,06; con 150 passi la
-correzione è a metà strada e la tinta non cambia ancora in modo misurabile.
-Serve quindi un training lungo, come sono quelli veri; non è stata provata su
-camere vere.
+### Vita a sommità piatta
 
-**Non provate.** Il riposizionamento periodico delle Gaussiane poco opache
-verso le zone che ne hanno bisogno (*FreeTimeGS*; 3DGS-MCMC): in queste prove
-il tetto di Gaussiane non viene raggiunto, quindi non ci sarebbe nulla da
-ridistribuire. La densificazione che tiene conto del tempo (*Temporally Aware
-Densification*, 2026) e la modulazione del moto con la durata (*SharpTimeGS*):
-per misurarle servono riprese con movimenti rapidi. Sono le prime da provare
-sulla workstation.
+Scartata. *SharpTimeGS* (Liao e altri, CVPR 2026) sostituisce la campana che
+regola l'opacità nel tempo con un profilo piatto dai fianchi ripidi. Qui è
+stata provata alzando l'esponente della campana da 2 a 4. Le camere usate
+migliorano di 0,4 dB e la camera esclusa peggiora di 0,24 dB. Avrebbe
+richiesto anche di cambiare il formato, il player e il lettore per Unity.
 
-Riferimenti: 4C4D, arXiv 2604.04063; FreeTimeGS, arXiv 2506.05348;
-SharpTimeGS, arXiv 2602.02989; Temporally Aware Densification, arXiv
+### Vincolo tra frame consecutivi
+
+Scartato. Si disegnano due frame consecutivi nello stesso passo e si chiede
+che la loro differenza sia quella delle riprese. Nessun guadagno, e il
+training è più lento del 70%.
+
+### Opacità riveduta alla divisione
+
+Scartata. È la correzione dell'opacità delle Gaussiane divise o duplicate
+descritta in *Revising Densification in Gaussian Splatting* (Rota Bulò e
+altri, ECCV 2024), già disponibile in gsplat. Nessun effetto.
+
+### Colori delle camere
+
+Tenuta come opzione. Compensare esposizione e bianco per camera è una pratica
+nota. Prova su 5 frame a 96×72, con una camera resa più calda (rosso ×1,25,
+blu ×0,80): con 450 passi i guadagni trovati per quella camera rispetto alla
+vicina sono 1,21 e 0,86, e la differenza di tinta della scena tra i quattro
+punti di vista scende da 0,15 a 0,06. Con 150 passi la correzione è a metà e
+la tinta non cambia ancora. Serve quindi un training lungo. Non è stata
+provata su camere vere.
+
+### Da provare
+
+Il riposizionamento periodico delle Gaussiane poco opache (*FreeTimeGS*,
+3DGS-MCMC). In queste prove il tetto di Gaussiane non viene raggiunto, quindi
+non c'era nulla da ridistribuire. La densificazione che tiene conto del tempo
+(*Temporally Aware Densification*, 2026) e la modulazione del moto con la
+durata (*SharpTimeGS*). Per misurarle servono riprese con movimenti rapidi.
+
+Riferimenti: 4C4D, arXiv 2604.04063. FreeTimeGS, arXiv 2506.05348.
+SharpTimeGS, arXiv 2602.02989. Temporally Aware Densification, arXiv
 2606.23212.
 
 ## Formato del player
@@ -410,9 +401,9 @@ player/
   chunks/0000.js, 0001.js, …         un blocco per spezzone della ripresa
 ```
 
-La scena non è scritta frame per frame. Ogni Gaussiana è salvata **una volta
-sola**, con l'istante su cui è centrata, la sua durata e la sua velocità, e il
-player la valuta nell'istante mostrato, come fa il training: la sposta di
+Ogni Gaussiana è salvata una volta sola, con l'istante su cui è centrata, la
+durata e la velocità. Il player la valuta nell'istante mostrato, come fa il
+training: la sposta di
 `velocità × (t − istante)` e ne attenua l'opacità con la campana temporale.
 
 In un blocco le Gaussiane sono ordinate per istante (prima le poche a vita
