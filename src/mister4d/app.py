@@ -431,7 +431,9 @@ class Studio:
                 cmds += [("Alleggerisco la scena per il visore",
                           cli + ["lighten", str(run), "--out", str(light),
                                  "--budget", str(int(o.get("headset_budget") or 80000))] + cpu),
-                         ("Creo il player per il visore",
+                         ("Scrivo la scena per Unity",
+                          cli + ["export", str(light), "--format", "engine", "--out", str(self.result / "scena_visore")]),
+                         ("Creo l'anteprima della scena per il visore",
                           cli + ["export", str(light), "--format", "web", "--out", str(self.result / "player_visore")])]
             if o.get("extra_ply"):
                 cmds.append(("Scrivo la sequenza di file PLY",
@@ -572,7 +574,9 @@ class Studio:
                     out["extras"].append({"kind": "subject", "name": subject.name, "mb": _megabytes(subject)})
                 if o.get("extra_headset") and (headset / "scene.json").exists():
                     scene = _read_json(headset / "scene.json") or {}
-                    out["extras"].append({"kind": "headset", "name": headset.name, "mb": _megabytes(headset),
+                    engine = self.result / "scena_visore"
+                    out["extras"].append({"kind": "headset", "name": engine.name, "mb": _megabytes(engine),
+                                          "preview": headset.name,
                                           "url": "/project/risultato/player_visore/index.html",
                                           "visible": scene.get("alive_max"), "frames": scene.get("num_frames"),
                                           "fps": scene.get("fps")})

@@ -686,7 +686,7 @@
           }
           if (extra.kind === 'headset') {
             const perSecond = extra.frames > 1 ? ` · ${size(extra.mb / (extra.frames / extra.fps))} al secondo` : '';
-            return ['Versione per visore autonomo', `cartella ${extra.name} · ${size(extra.mb)}${perSecond} · `
+            return ['Scena per visore autonomo (Unity)', `cartella ${extra.name} · ${size(extra.mb)}${perSecond} · `
               + `al massimo ${num(extra.visible)} gaussiane insieme`];
           }
           return ['Sequenza PLY', `cartella ${extra.name} · ${count(extra.files, 'file', 'file')} · ${size(extra.mb)}`];
@@ -695,7 +695,7 @@
         const headset = summary.extras.find((extra) => extra.kind === 'headset');
         if (headset) {
           made.append(el('div', { class: 'deliver' }, el('a', { class: 'btn', href: headset.url, target: '_blank',
-            rel: 'noopener', text: 'Apri la versione per visore' })));
+            rel: 'noopener', text: 'Guarda nel browser la scena per visore' })));
         }
         wrap.append(made);
       }

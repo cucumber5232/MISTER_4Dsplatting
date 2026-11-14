@@ -240,6 +240,10 @@ di Gaussiane visibili per istante, quelle da memorizzare sono K volte meno.
 - `export --format web`: cartella con il player e la scena a blocchi, caricati
   mentre la ripresa scorre. Si apre con doppio clic su `index.html` (o da un
   server web) e regge riprese di qualunque durata.
+- `export --format engine`: cartella per un motore grafico. Gli stessi blocchi
+  del player come file binari (`chunks/0000.bin`, gzip) e uno `scene.json`
+  con soli numeri, testi ed elenchi di numeri. La legge il componente per
+  Unity in `unity/`; il formato è descritto in `unity/README.md`.
 - `export --format ply`: un `.ply` 3DGS standard per frame, per altri
   strumenti. È il formato pesante (non compresso).
 - `lighten`: copia più leggera di una ripresa già ricostruita, con al massimo
@@ -329,7 +333,7 @@ scena negli istanti su cui è stata allenata (frame interi).
 Limiti attuali del player: colore indipendente dalla vista (solo termine DC);
 ordinamento in profondità e decodifica dei blocchi sul thread principale (con
 blocchi molto grandi è possibile uno scatto al cambio di blocco); nessuna
-modalità per visori (WebXR).
+modalità per visori nel browser (WebXR): per il visore c'è il lettore Unity.
 
 ## Backend di rasterizzazione
 
@@ -354,6 +358,13 @@ pytest
 
 I test lenti allenano un modello minuscolo su CPU (anche nel percorso
 multi-device) e calibrano un rig sintetico confrontandolo con la verità.
+
+`tests/test_unity.py` copre quello che del lettore Unity si può verificare
+senza Unity: gli stessi byte del player nella cartella per i motori grafici;
+la parte in C# che legge i blocchi, sceglie e ordina le Gaussiane, compilata
+ed eseguita con mono quando è installato (altrimenti il test viene saltato) e
+confrontata con l'esportatore; i conti di proiezione dello shader, trascritti
+e confrontati con la camera di riferimento.
 
 `tests/test_app.py` copre il server di MISTER 4D Studio: ogni comando che la
 pagina può chiedere viene fatto leggere al parser della riga di comando (le

@@ -23,7 +23,7 @@ video per camera → ingest → calibrate → prepare → masks → init → tra
 | `train` | ottimizzazione della scena dinamica su tutte le GPU disponibili; le riprese lunghe a spezzoni, con ripresa dopo un'interruzione; su richiesta impara gli scarti di sync tra camere |
 | `eval` | metriche (qualità, sagoma, sfarfallio) e immagini di confronto su una camera esclusa dal training |
 | `render` | video del risultato: anteprima, oppure materiale per il montaggio (ripresa intera, qualunque risoluzione, sfondo trasparente in ProRes 4444 o PNG, movimento di camera a piacere) |
-| `export` | player 4D in **un solo file HTML** che si apre con doppio clic; per le riprese lunghe una cartella che carica la scena a pezzi; oppure sequenza di `.ply` |
+| `export` | player 4D in **un solo file HTML** che si apre con doppio clic; per le riprese lunghe una cartella che carica la scena a pezzi; la scena per Unity; oppure sequenza di `.ply` |
 | `lighten` | copia più leggera di una ripresa già ricostruita, per i visori autonomi |
 
 Tutto gira **in locale** sulla propria macchina: non c'è nessun servizio web o
@@ -75,8 +75,11 @@ GPU e senza riprese reali):
 - le riprese lunghe, le scene leggere e la versione per visore: i
   meccanismi hanno test automatici e misure su dati sintetici minuscoli (vedi
   [Riprese lunghe, scene leggere, montaggio, visori](#riprese-lunghe-scene-leggere-montaggio-visori)),
-  ma non sono mai stati usati su una ripresa vera, e nessuna scena è stata
-  aperta su un visore;
+  ma non sono mai stati usati su una ripresa vera;
+- il lettore per Unity: la lettura dei dati e l'ordinamento sono stati
+  compilati ed eseguiti fuori da Unity, e i conti dello shader confrontati con
+  quelli del player, ma né il componente né lo shader sono mai stati aperti in
+  Unity, e nessuna scena è stata vista su un visore;
 - il backend GPU (gsplat/CUDA) e il training su più GPU su hardware vero. La
   logica multi-GPU è collaudata su CPU con due dispositivi virtuali e il
   rasterizzatore di riferimento su CPU coincide numericamente con
@@ -367,8 +370,17 @@ mister4d lighten runs/take01 --out runs/take01_visore --budget 80000
 ```
 
 ```bash
-mister4d export runs/take01_visore --format web --out exports/take01_visore
+mister4d export runs/take01_visore --format engine --out exports/scena_visore
 ```
+
+La cartella `scena_visore` è quella che legge il componente per **Unity** in
+[unity/](unity/README.md), pensato per Quest 3: si copia in
+`Assets/StreamingAssets` del progetto. Con `--format web` si ottiene invece la
+stessa scena da guardare nel browser. Il componente Unity **non è ancora stato
+aperto in Unity né provato su un visore**: in [unity/README.md](unity/README.md)
+c'è che cosa è stato verificato lo stesso e che cosa controllare alla prima
+apertura. Per Unreal non c'è un lettore; il formato è descritto nello stesso
+documento.
 
 **Materiale per il montaggio.** La ripresa intera con il solo soggetto su
 sfondo trasparente, in ProRes 4444 oppure come immagini PNG, alla risoluzione
@@ -459,9 +471,10 @@ scelta in [docs/PIPELINE.md](docs/PIPELINE.md).
   solo su dati sintetici minuscoli: tempi e peso su riprese vere, e la resa
   nei punti in cui due spezzoni si incontrano, vanno misurati sulla
   workstation.
-- **Player.** Colore indipendente dalla vista. Non ha ancora una modalità per
-  visori (WebXR): la versione leggera prodotta da `lighten` è pensata per un
-  visore autonomo ma **non è mai stata provata su un visore**.
+- **Player.** Colore indipendente dalla vista, sia nel browser sia in Unity.
+- **Visore.** Il lettore per Unity (Quest 3) è scritto e verificato solo nelle
+  parti che non richiedono Unity: **non è mai stato aperto in Unity né provato
+  su un visore**. Per Unreal non c'è un lettore.
 - **Nessuna misura.** Fotorealismo non significa accuratezza metrica: il
   risultato non è una superficie su cui prendere quote.
 
@@ -469,6 +482,7 @@ scelta in [docs/PIPELINE.md](docs/PIPELINE.md).
 
 ```
 MISTER 4D Studio.bat   avvio di Studio con doppio clic (Windows)
+unity/            componente per Unity (Quest 3) e descrizione del formato per altri motori
 src/mister4d/     pacchetto Python (un modulo per passo della pipeline)
   run.py          lettura di una ripresa ricostruita, intera o a spezzoni
   lighten.py      copia leggera per visori autonomi
@@ -505,10 +519,9 @@ mancano, in ordine di peso:
 3. **Resa.** Colore che cambia con il punto di vista, capelli e mani, bordi
    puliti (maschere migliori), stabilità da un fotogramma all'altro.
 4. **Riproduzione.** Un visore o un motore grafico al posto della pagina web.
-   La versione leggera della scena e il suo formato (documentato in
-   [docs/PIPELINE.md](docs/PIPELINE.md)) sono pronti; manca chi la disegna
-   sul visore: una modalità WebXR di questo player oppure un lettore del
-   formato in Unity. Va fatto con il visore in mano.
+   La versione leggera della scena e un lettore per Unity pensato per Quest 3
+   ([unity/](unity/README.md)) ci sono; il lettore va aperto in Unity e provato
+   sul visore, e solo lì si vedrà quante Gaussiane regge e come rende.
 
 Prima di tutto questo viene il collaudo su GPU e su riprese reali, che non è
 ancora stato fatto.

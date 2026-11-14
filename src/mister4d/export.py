@@ -7,6 +7,8 @@
   loaded while playing. It opens with a double click on ``index.html`` too
   (or from any web server), and plays takes of any length holding only the
   part being shown;
+- ``engine``: a folder with the same chunks as plain binary files and a flat
+  ``scene.json``, to be read by a game engine (see ``unity/Mister4D``);
 - ``ply``: one standard 3DGS ``.ply`` per frame, for third-party tools
   (uncompressed: much heavier).
 
@@ -243,6 +245,54 @@ def export_html(run_dir: str | Path, out_file: str | Path, frame_step: int = 1,
     if size_mb > 150:
         log("[export] WARNING: a single file this large is slow to open and stays whole in memory: "
             "for long takes use the folder format (--format web), which loads the take piece by piece")
+    return out
+
+
+def export_engine(run_dir: str | Path, out_dir: str | Path, frame_step: int = 1,
+                  min_opacity: float = 0.02, log=print) -> Path:
+    """Folder for a game engine: ``scene.json`` and one gzip-compressed binary file per chunk.
+
+    The bytes of a chunk are those of the player format (see the top of this
+    file). The description is flat and has only numbers, strings and arrays
+    of numbers, so that the simplest JSON readers of the engines can take it:
+    no nested arrays, no nulls, no names that are keywords somewhere.
+    """
+    run = Run(run_dir)
+    out = Path(out_dir)
+    if (out / "chunks").exists():
+        shutil.rmtree(out / "chunks")
+    (out / "chunks").mkdir(parents=True)
+    chunks = []
+    for i, (info, data) in enumerate(_chunks(run, min_opacity)):
+        name = f"chunks/{i:04d}.bin"
+        (out / name).write_bytes(data)
+        chunks.append({
+            "file": name, "bytes": len(data), "first": info["first"], "last": info["last"],
+            "count": info["count"], "long_lived": info["long"],
+            "reach": -1.0 if info["reach"] is None else info["reach"],  # -1: every Gaussian is always a candidate
+            "bbox_min": info["bbox_min"], "bbox_max": info["bbox_max"],
+            "time_start": info["time"][0], "time_span": info["time"][1], "vel_max": info["vel_max"],
+            "life_log_min": info["life"][0], "life_log_max": info["life"][1],
+            "scale_log_min": info["log_scale"][0], "scale_log_max": info["log_scale"][1],
+            "alive_max": info["alive_max"],
+        })
+    static = run.static_frame is not None
+    scene = {
+        "format": "mister4d-engine", "version": 1,
+        "num_frames": 1 if static else run.num_frames, "fps": run.meta["fps"],
+        "min_opacity": min_opacity, "gaussians": sum(c["count"] for c in chunks),
+        "alive_max": max(c["alive_max"] for c in chunks),
+        "bbox_min": np.min([c["bbox_min"] for c in chunks], axis=0).tolist(),
+        "bbox_max": np.max([c["bbox_max"] for c in chunks], axis=0).tolist(),
+        "up_axis": "z", "handedness": "right", "units": "metres",
+        "chunks": chunks,
+    }
+    (out / "scene.json").write_text(json.dumps(scene, indent=1))
+    size_mb = sum(f.stat().st_size for f in out.rglob("*") if f.is_file()) / 1e6
+    seconds = scene["num_frames"] / scene["fps"]
+    log(f"[export] engine folder: {scene['num_frames']} frames in {len(chunks)} chunk(s), "
+        f"{scene['gaussians']} Gaussians, at most {scene['alive_max']} visible at once, {size_mb:.1f} MB"
+        + (f", {size_mb / seconds:.1f} MB per second of take" if scene["num_frames"] > 1 else "") + f" -> {out}")
     return out
 
 

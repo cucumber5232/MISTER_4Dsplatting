@@ -119,9 +119,9 @@ def cmd_render(args):
 
 
 def cmd_export(args):
-    from .export import export_html, export_ply, export_web
+    from .export import export_engine, export_html, export_ply, export_web
 
-    writer = {"html": export_html, "web": export_web, "ply": export_ply}[args.format]
+    writer = {"html": export_html, "web": export_web, "engine": export_engine, "ply": export_ply}[args.format]
     writer(args.run, args.out, frame_step=args.frame_step)
 
 
@@ -267,10 +267,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("export", help="bake the scene: single-file player, player folder or .ply sequence")
     p.add_argument("run", help="run folder")
-    p.add_argument("--out", required=True, help="an .html file (html) or a folder (web, ply)")
-    p.add_argument("--format", choices=["html", "web", "ply"], default="html",
+    p.add_argument("--out", required=True, help="an .html file (html) or a folder (web, engine, ply)")
+    p.add_argument("--format", choices=["html", "web", "engine", "ply"], default="html",
                    help="html = one file that opens with a double click (default); "
                         "web = folder that loads the take piece by piece, for long takes; "
+                        "engine = folder for a game engine (see unity/Mister4D); "
                         "ply = one 3DGS .ply per frame")
     p.add_argument("--frame-step", type=int, default=1)
     p.set_defaults(func=cmd_export)

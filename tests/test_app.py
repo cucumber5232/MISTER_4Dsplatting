@@ -193,13 +193,15 @@ def test_a_long_take_and_the_extras_change_what_the_last_step_makes(studio):
     studio.set_options({"extra_subject": True, "subject_view": "cam02", "extra_headset": True,
                         "headset_budget": 50000, "extra_ply": True})
     cmds = cli_args(studio, "risultato")
-    assert [c[0] for c in cmds] == ["render", "export", "render", "lighten", "export", "export"]
+    assert [c[0] for c in cmds] == ["render", "export", "render", "lighten", "export", "export", "export"]
     assert "--take" in cmds[0]  # ten seconds: shown once, whole
     assert cmds[1][cmds[1].index("--format") + 1] == "web"  # a folder that loads the take piece by piece
     assert "--transparent" in cmds[2] and cmds[2][cmds[2].index("--camera") + 1] == "cam02"
     assert cmds[2][cmds[2].index("--out") + 1].endswith("soggetto.mov")
     assert cmds[3][cmds[3].index("--budget") + 1] == "50000"
-    assert cmds[4][1].endswith("run_visore") and cmds[5][cmds[5].index("--format") + 1] == "ply"
+    assert cmds[4][1].endswith("run_visore") and cmds[4][cmds[4].index("--format") + 1] == "engine"  # for Unity
+    assert cmds[5][1].endswith("run_visore") and cmds[5][cmds[5].index("--format") + 1] == "web"  # to look at it
+    assert cmds[6][cmds[6].index("--format") + 1] == "ply"
 
 
 def test_progress_of_a_long_take_counts_its_segments():
