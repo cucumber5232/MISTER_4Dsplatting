@@ -141,7 +141,7 @@ def cmd_demo(args):
     from .synth import SynthConfig, make_prepared_dataset, make_raw_session
 
     cfg = SynthConfig(num_cameras=args.cameras, width=args.width, height=args.height,
-                      take_frames=args.frames, seed=args.seed)
+                      take_frames=args.frames, seed=args.seed, subject=args.subject)
     if args.run:
         from .demo import run_demo
 
@@ -295,6 +295,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--height", type=int, default=540)
     p.add_argument("--frames", type=int, default=40)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--subject", choices=["mannequin", "human"], default="mannequin",
+                   help="mannequin = quick figure made of ellipsoids; human = clothed person on a studio "
+                        "set with a cast shadow, to judge how real the result looks")
     p.add_argument("--run", action="store_true",
                    help="also run every step, from the videos to the player")
     p.add_argument("--prepared", action="store_true",

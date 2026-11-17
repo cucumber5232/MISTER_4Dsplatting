@@ -178,8 +178,18 @@ Ottimizzazione (`trainer.py`):
   vengono eliminate dalla densificazione. Non agisce quando si rifinisce una
   scena già fatta (`lighten`). Le misure sono in
   [Idee recenti](#idee-recenti);
+- forma delle Gaussiane: una penalità su quelle ad ago, cioè molto più lunghe
+  in una direzione che nelle altre due (`lambda_needle`), e una dimensione
+  minima pari a mezzo pixel delle immagini di training (`min_scale_pixels`).
+  Un ago nasce quando una Gaussiana si allunga lungo la linea di vista di una
+  camera: da lì non si vede, da ogni altro punto è una striscia. Una Gaussiana
+  più sottile di un pixel non costa nulla nelle immagini di training e
+  ingrandita diventa un pelo. I dischi appoggiati su una superficie restano
+  permessi;
 - densificazione con la strategia di default di gsplat (duplica / dividi /
   elimina) fino al 60% delle iterazioni, con tetto `max_gaussians`;
+- dopo la fine della densificazione le Gaussiane che scendono sotto la soglia
+  di opacità continuano a essere tolte, fino all'ultimo passo (`prune_to_end`);
 - numero di passi automatico: 250 per frame della clip (minimo 7000).
 
 Multi-GPU. I parametri stanno sulla prima GPU. A ogni passo ciascuna GPU
@@ -201,6 +211,8 @@ Opzioni: `configs/default.yaml` e `TrainConfig` in `trainer.py`. Le più utili:
 | `init_duration` | 1.0 | vita iniziale di una Gaussiana, in frame inizializzati |
 | `learn_time_offsets` | false | `true` con camere non sincronizzate via hardware |
 | `learn_camera_colors` | false | `true` con camere che non rendono i colori allo stesso modo |
+| `lambda_needle` | 0.02 | 0: nessun limite alla forma ad ago |
+| `min_scale_pixels` | 0.5 | 0: nessuna dimensione minima; valori più alti danno una scena più morbida |
 | `opacity_decay` | 0.005 | 0.015: meno Gaussiane e punti di vista intermedi più stabili, ma camere usate meno nitide; 0: spento |
 | `init_velocities` | true | velocità iniziali stimate dal moto dei punti |
 | `static` | false | `true`: 3DGS statico di un solo istante (`static_frame`) |
@@ -303,6 +315,58 @@ Gaussiane durante il training, vincolo di coerenza fotometrica tra camere
 sulla profondità renderizzata, durate iniziali più brevi, rasterizzazione
 antialiasing. Sono prove a bassa risoluzione su CPU: a piena risoluzione su
 GPU alcune potrebbero comportarsi diversamente.
+
+## Qualità
+
+Tre strumenti in `scripts/`, da lanciare con il Python di `.venv`, servono a
+giudicare quanto una scena sembra vera.
+
+- `make_benchmark.py` crea riprese sintetiche della persona di prova con la
+  verità: per ogni camera e frame la profondità e la sagoma esatte. Oltre alle
+  camere di training (`cam01`…) ci sono camere di verifica (`ver01`…) messe
+  negli spazi tra le prime, oltre un'estremità dell'arco e più in alto. Non
+  vanno mai usate per `init` e `train`.
+- `quality_check.py` misura una scena ricostruita, separando camere di
+  training e di verifica.
+- `contact_sheet.py` disegna la scena da punti di vista lungo e oltre l'arco
+  delle camere, anche ingrandita.
+
+Misure di `quality_check.py`, oltre a PSNR, SSIM, IoU e sfarfallio:
+
+| Misura | Che cosa dice |
+|---|---|
+| `spill` | alfa disegnata fuori dalla sagoma vera, in rapporto alla sua area |
+| `holes` | alfa mancante dentro la sagoma vera |
+| `soft` | quota dei pixel attorno al soggetto con alfa né vuota né piena |
+| `depth` | distanza mediana tra profondità disegnata e vera |
+| `thick` | quanto è spesso in profondità ciò che compone un pixel: una superficie è sottile, la nebbia è spessa |
+| `floaters` | quota dell'opacità che sta dove non c'è niente: fuori dalla sagoma vera di una camera, o più di 4 cm davanti alla superficie vera |
+| `needles` | quota delle Gaussiane visibili almeno tre volte più lunghe in una direzione che nella successiva |
+| `opaque` | quota delle Gaussiane visibili con opacità sopra 0,5 |
+
+Prima delle correzioni, nella demo su CPU, il 38% delle Gaussiane visibili
+era ad ago e l'opacità mediana era 0,015. Ingrandita nel player, la scena
+mostrava strisce e peli attorno al soggetto. Prova su un istante della demo
+(240×135, CPU, 800 passi), camera esclusa e camere di training:
+
+| Variante | Aghi | PSNR camera esclusa | PSNR training |
+|---|---|---|---|
+| senza correzioni | 38% | 21,6 dB | 39,6 dB |
+| penalità sugli aghi 0,02 | 0% | 21,5 dB | 39,3 dB |
+| dimensione minima 0,5 pixel | 13% | 22,1 dB | 37,7 dB |
+
+La penalità toglie gli aghi quasi senza costo. La dimensione minima migliora
+la camera esclusa e fa perdere nitidezza alle camere di training, che a
+questa risoluzione erano adattate oltre il dovuto. Tutte e due sono attive di
+default. Vanno misurate su GPU a piena risoluzione con la persona di prova.
+
+Opzioni presenti ma spente, non ancora misurate a fondo: `lambda_opacity_entropy`
+(una Gaussiana o c'è o non c'è), `lambda_ray_spread` (un pixel deve essere
+fatto da una superficie e non da strati lontani in profondità), `init_flatten`
+e `lambda_flat` (Gaussiane che partono e restano come dischi sulla superficie),
+`opacity_decay_stop`. Le prime due, con pesi 0,05 e 0,1, dimezzano lo spessore
+ma tolgono 7–10 dB alle camere di training: vanno provate con pesi dieci
+volte più bassi.
 
 ## Idee recenti
 

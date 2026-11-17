@@ -72,10 +72,47 @@ def estimate_velocities(xyz: np.ndarray, frames: np.ndarray, smooth: int = 8) ->
     return velocities.astype(np.float32)
 
 
+def _rotmat_to_quat(R: Tensor) -> Tensor:
+    """Rotation matrices [N,3,3] to quaternions wxyz [N,4]."""
+    m00, m11, m22 = R[:, 0, 0], R[:, 1, 1], R[:, 2, 2]
+    w = torch.sqrt(torch.clamp(1.0 + m00 + m11 + m22, min=1e-8)) / 2.0
+    x = torch.sqrt(torch.clamp(1.0 + m00 - m11 - m22, min=1e-8)) / 2.0
+    y = torch.sqrt(torch.clamp(1.0 - m00 + m11 - m22, min=1e-8)) / 2.0
+    z = torch.sqrt(torch.clamp(1.0 - m00 - m11 + m22, min=1e-8)) / 2.0
+    big = torch.stack([w, x, y, z], dim=-1).argmax(dim=-1)
+    q = torch.zeros(R.shape[0], 4, dtype=R.dtype)
+    for k in range(4):
+        sel = big == k
+        if not sel.any():
+            continue
+        r = R[sel]
+        if k == 0:
+            d = 4.0 * w[sel]
+            q[sel] = torch.stack([w[sel], (r[:, 2, 1] - r[:, 1, 2]) / d, (r[:, 0, 2] - r[:, 2, 0]) / d,
+                                  (r[:, 1, 0] - r[:, 0, 1]) / d], dim=-1)
+        elif k == 1:
+            d = 4.0 * x[sel]
+            q[sel] = torch.stack([(r[:, 2, 1] - r[:, 1, 2]) / d, x[sel], (r[:, 0, 1] + r[:, 1, 0]) / d,
+                                  (r[:, 0, 2] + r[:, 2, 0]) / d], dim=-1)
+        elif k == 2:
+            d = 4.0 * y[sel]
+            q[sel] = torch.stack([(r[:, 0, 2] - r[:, 2, 0]) / d, (r[:, 0, 1] + r[:, 1, 0]) / d, y[sel],
+                                  (r[:, 1, 2] + r[:, 2, 1]) / d], dim=-1)
+        else:
+            d = 4.0 * z[sel]
+            q[sel] = torch.stack([(r[:, 1, 0] - r[:, 0, 1]) / d, (r[:, 0, 2] + r[:, 2, 0]) / d,
+                                  (r[:, 1, 2] + r[:, 2, 1]) / d, z[sel]], dim=-1)
+    return q
+
+
 def init_gaussian_params(xyz: np.ndarray, rgb: np.ndarray, frames: np.ndarray, sh_degree: int,
                          init_opacity: float = 0.1, init_duration: float = 1.0,
-                         velocities: np.ndarray | None = None) -> nn.ParameterDict:
-    """Isotropic Gaussians sized by the distance to their neighbours of the same frame."""
+                         velocities: np.ndarray | None = None, flatten: float = 1.0) -> nn.ParameterDict:
+    """Gaussians sized by the distance to their neighbours of the same frame.
+
+    Isotropic by default. With ``flatten`` < 1 they start as discs lying on the
+    surface the points describe: that much thinner across it than along it.
+    """
     from scipy.spatial import cKDTree
 
     xyz = np.asarray(xyz, dtype=np.float32)
@@ -91,10 +128,28 @@ def init_gaussian_params(xyz: np.ndarray, rgb: np.ndarray, frames: np.ndarray, s
     spacing = np.clip(spacing, 1e-4, None)
     quats = torch.zeros(n, 4)
     quats[:, 0] = 1.0
+    log_scales = torch.log(torch.from_numpy(spacing))[:, None].repeat(1, 3)
+    if flatten < 1.0:
+        normals = np.zeros((n, 3), dtype=np.float32)
+        normals[:, 2] = 1.0
+        for f in np.unique(frames):
+            sel = np.nonzero(frames == f)[0]
+            k = min(10, len(sel))
+            if k >= 4:  # the direction in which the neighbours of a point spread least
+                _, nb = cKDTree(xyz[sel]).query(xyz[sel], k=k)
+                local = xyz[sel][nb] - xyz[sel][nb].mean(axis=1, keepdims=True)
+                _, vecs = np.linalg.eigh(np.einsum("nki,nkj->nij", local, local))
+                normals[sel] = vecs[:, :, 0]
+        z = torch.from_numpy(normals)
+        helper = torch.where(z[:, 2:3].abs() < 0.9, torch.tensor([[0.0, 0.0, 1.0]]), torch.tensor([[1.0, 0.0, 0.0]]))
+        x = F.normalize(torch.cross(helper.expand_as(z), z, dim=-1), dim=-1)
+        y = torch.cross(z, x, dim=-1)
+        quats = _rotmat_to_quat(torch.stack([x, y, z], dim=-1))  # the local z axis is the normal
+        log_scales[:, 2] += math.log(flatten)
     return nn.ParameterDict(
         {
             "means": nn.Parameter(torch.from_numpy(xyz)),
-            "scales": nn.Parameter(torch.log(torch.from_numpy(spacing))[:, None].repeat(1, 3)),
+            "scales": nn.Parameter(log_scales),
             "quats": nn.Parameter(quats),
             "opacities": nn.Parameter(torch.full((n,), math.log(init_opacity / (1 - init_opacity)))),
             "sh0": nn.Parameter(rgb_to_sh0(torch.from_numpy(np.asarray(rgb, dtype=np.float32)))[:, None, :]),
@@ -184,12 +239,14 @@ class DynamicScene(nn.Module):
 
 def render_scene(scene: DynamicScene | SceneView, frame: float | Tensor, viewmats: Tensor, Ks_opencv: Tensor,
                  width: int, height: int, backend: str = "auto", antialiased: bool = False,
-                 active_sh_degree: int | None = None):
+                 active_sh_degree: int | None = None, moments: bool = False):
     """Render the scene at ``frame`` from C cameras.
 
     ``Ks_opencv`` are intrinsics in the calibration-file convention.
     Returns premultiplied rgb [C,H,W,3], alpha [C,H,W,1], depth [C,H,W,1],
     the rasterizer info dict and the state of the Gaussians alive at ``frame``.
+    With ``moments`` the info also holds ``moments`` [C,H,W,2]: the blended depth
+    and squared depth of what every pixel is made of (not divided by alpha).
     """
     from .rasterizer import opencv_to_render_K, render
 
@@ -197,11 +254,18 @@ def render_scene(scene: DynamicScene | SceneView, frame: float | Tensor, viewmat
     state = view.state_at(frame)
     cam_centers = -torch.einsum("cji,cj->ci", viewmats[:, :3, :3], viewmats[:, :3, 3])
     colors = view.colors(state, cam_centers, active_sh_degree)
+    if moments:  # depth and squared depth of every Gaussian, blended like two more colours
+        z = torch.einsum("cj,mj->cm", viewmats[:, 2, :3], state["means"]) + viewmats[:, 2, 3:4]
+        if colors.dim() == 2:
+            colors = colors[None].expand(z.shape[0], -1, -1)
+        colors = torch.cat([colors, z[..., None], (z * z)[..., None]], dim=-1)
     rgb, alpha, depth, info = render(
         state["means"], state["quats"], state["scales"], state["opacities"], colors,
         viewmats, opencv_to_render_K(Ks_opencv), width, height,
         backend=backend, antialiased=antialiased,
     )
+    if moments:
+        info["moments"], rgb = rgb[..., 3:5], rgb[..., :3]
     return rgb, alpha, depth, info, state
 
 

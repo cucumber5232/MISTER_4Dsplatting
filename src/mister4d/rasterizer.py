@@ -52,7 +52,7 @@ def render(
     quats: Tensor,  # [N, 4] wxyz, not necessarily normalized
     scales: Tensor,  # [N, 3] already activated (metres)
     opacities: Tensor,  # [N] already activated (0..1)
-    colors: Tensor,  # [N, 3] or [C, N, 3]
+    colors: Tensor,  # [N, D] or [C, N, D]: colours, or any quantity to blend like a colour
     viewmats: Tensor,  # [C, 4, 4] world -> camera
     Ks: Tensor,  # [C, 3, 3] rasterizer convention, see opencv_to_render_K
     width: int,
@@ -62,7 +62,7 @@ def render(
     near: float = 0.01,
     far: float = 1e10,
 ) -> tuple[Tensor, Tensor, Tensor, dict]:
-    """Render C views. Returns rgb [C,H,W,3], alpha [C,H,W,1], depth [C,H,W,1], info.
+    """Render C views. Returns rgb [C,H,W,D], alpha [C,H,W,1], depth [C,H,W,1], info.
 
     ``rgb`` is premultiplied (no background added): composite with
     ``rgb + (1 - alpha) * background``.
@@ -96,7 +96,7 @@ def _render_gsplat(means, quats, scales, opacities, colors, viewmats, Ks,
         render_mode="RGB+ED",
         rasterize_mode="antialiased" if antialiased else "classic",
     )
-    return out[..., :3], alpha, out[..., 3:4], info
+    return out[..., :-1], alpha, out[..., -1:], info
 
 
 # --------------------------------------------------------------------------
@@ -201,7 +201,7 @@ def _render_torch(means, quats, scales, opacities, colors, viewmats, Ks,
 
     out_rgb, out_alpha, out_depth = [], [], []
     for c in range(C):
-        rgb = torch.zeros(rows * tile, cols * tile, 3, dtype=dt, device=dev)
+        rgb = torch.zeros(rows * tile, cols * tile, colors.shape[-1], dtype=dt, device=dev)
         alpha = torch.zeros(rows * tile, cols * tile, 1, dtype=dt, device=dev)
         depth = torch.zeros(rows * tile, cols * tile, 1, dtype=dt, device=dev)
         visible = torch.nonzero((radii[c] > 0).all(dim=-1)).squeeze(-1)

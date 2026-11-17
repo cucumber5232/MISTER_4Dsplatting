@@ -1,8 +1,10 @@
-"""Synthetic multi-camera recordings of an animated mannequin.
+"""Synthetic multi-camera recordings of an animated figure.
 
 Lets the whole pipeline run (and be tested) without any hardware: the
-generator ray-casts a figure made of ellipsoids from a ring of virtual cameras
-and writes exactly what a real session would provide:
+generator renders a figure from a ring of virtual cameras (a mannequin made of
+ellipsoids, quick and enough for the tests, or the clothed human of
+``human.py``, to judge how real a reconstruction looks) and writes exactly
+what a real session would provide:
 
 - ``raw/calib/<cam>.mp4``  a ChArUco board carried through the volume
 - ``raw/empty/<cam>.mp4``  the empty set
@@ -48,6 +50,9 @@ class SynthConfig:
     max_offset: int = 4  # cameras start recording up to this many frames apart
     event_frame: int = 6  # global frame of the clap / flash (after every camera started)
     seed: int = 0
+    # "mannequin": ellipsoids on a flat set, the action is stretched over the take.
+    # "human": the clothed figure of human.py on a studio set, moving in real time.
+    subject: str = "mannequin"
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +301,33 @@ def write_calibration_frames(out_dir: str | Path, cfg: SynthConfig, spec: BoardS
     return rig
 
 
+class _View:
+    """One camera of the set: the empty set and the subject at any frame."""
+
+    def __init__(self, cfg: SynthConfig, cam: Camera):
+        self.cfg = cfg
+        self.studio = None
+        if cfg.subject == "human":
+            from .human import StudioView
+
+            self.studio = StudioView(cam)
+            self.background = self.studio.background
+        elif cfg.subject == "mannequin":
+            self.rays = camera_rays(cam)
+            self.background = render_background(*self.rays)
+        else:
+            raise ValueError(f"unknown subject {cfg.subject!r}: use 'mannequin' or 'human'")
+
+    def frame(self, frame: float, length: int) -> tuple[np.ndarray, np.ndarray]:
+        """Image and coverage of the subject, ``frame`` frames into an action of ``length`` frames."""
+        if self.studio is not None:  # the human moves in real time whatever the length of the take
+            image, cover, _ = self.studio.render(max(frame, 0.0) / self.cfg.fps)
+            return image, cover
+        phase = float(np.clip(frame / max(length - 1, 1), 0.0, 1.0))
+        rgb, hit = render_subject(*self.rays, mannequin(phase))
+        return np.where(hit[..., None], rgb, self.background), hit.astype(np.float32)
+
+
 def _to_uint8(img: np.ndarray, rng: np.random.Generator, noise: float) -> np.ndarray:
     out = img * 255.0
     if noise > 0:
@@ -320,26 +352,30 @@ def make_prepared_dataset(out_dir: str | Path, cfg: SynthConfig, init_points: in
     rng = np.random.default_rng(cfg.seed)
     frame_ids = list(range(cfg.take_frames))
     for name, cam in rig.cameras.items():
-        origin, dirs = camera_rays(cam)
-        background = render_background(origin, dirs)
+        view = _View(cfg, cam)
+        background = view.background
         (out / "images" / name).mkdir(parents=True, exist_ok=True)
         (out / "masks" / name).mkdir(parents=True, exist_ok=True)
         (out / "background").mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(out / "background" / f"{name}.jpg"),
                     cv2.cvtColor(_to_uint8(background, rng, 0.0), cv2.COLOR_RGB2BGR))
         for fid in frame_ids:
-            phase = (fid + (time_offsets or {}).get(name, 0.0)) / max(cfg.take_frames - 1, 1)
-            rgb, hit = render_subject(origin, dirs, mannequin(float(np.clip(phase, 0.0, 1.0))))
-            img = np.where(hit[..., None], rgb, background)
+            img, cover = view.frame(fid + (time_offsets or {}).get(name, 0.0), cfg.take_frames)
             cv2.imwrite(str(out / "images" / name / f"{frame_name(fid)}.png"),
                         cv2.cvtColor(_to_uint8(img, rng, cfg.noise), cv2.COLOR_RGB2BGR))
             cv2.imwrite(str(out / "masks" / name / f"{frame_name(fid)}.png"),
-                        hit.astype(np.uint8) * 255)
+                        (cover * 255.0 + 0.5).astype(np.uint8))
     rig.save(out / "calibration.json")
     write_meta(out, cfg.fps, frame_ids, rig.names,
                {"source": "synthetic", "true_time_offsets": time_offsets or {}})
     if init_points > 0:  # points on the true surface of every frame: a stand-in for the visual hull
-        clouds = [surface_points(mannequin(f / max(cfg.take_frames - 1, 1)), init_points, rng) for f in frame_ids]
+        if cfg.subject == "human":
+            from .human import surface_points as human_points
+
+            clouds = [human_points(f / cfg.fps, init_points, rng) for f in frame_ids]
+        else:
+            clouds = [surface_points(mannequin(f / max(cfg.take_frames - 1, 1)), init_points, rng)
+                      for f in frame_ids]
         write_points_ply(out / "init_points.ply", np.concatenate([c[0] for c in clouds]),
                          np.concatenate([c[1] for c in clouds]), np.repeat(frame_ids, len(clouds[0][0])))
     return out
@@ -388,9 +424,9 @@ def make_raw_session(out_dir: str | Path, cfg: SynthConfig, log=print) -> Path:
     (out / "gt" / "offsets.json").write_text(json.dumps(
         {"start_offset_frames": offsets, "event_frame": cfg.event_frame, "fps": cfg.fps}, indent=2))
 
-    rays = {n: camera_rays(c) for n, c in rig.cameras.items()}
+    views = {n: _View(cfg, c) for n, c in rig.cameras.items()}
     rays2 = {n: camera_rays(c, supersample=2) for n, c in rig.cameras.items()}
-    backgrounds = {n: render_background(*rays[n]) for n in rig.names}
+    backgrounds = {n: views[n].background for n in rig.names}
     tmp = out / "tmp_audio"
     tmp.mkdir(exist_ok=True)
 
@@ -420,9 +456,7 @@ def make_raw_session(out_dir: str | Path, cfg: SynthConfig, log=print) -> Path:
 
     def paint_take(name, g):
         first = cfg.event_frame + 3  # the action starts after the sync event
-        phase = float(np.clip((g - first) / max(cfg.take_frames - 1 - first, 1), 0, 1))
-        rgb, hit = render_subject(*rays[name], mannequin(phase))
-        return np.where(hit[..., None], rgb, backgrounds[name])
+        return views[name].frame(g - first, cfg.take_frames - first)[0]
 
     def paint_calib(name, g):
         R_b, t_b = board_pose(g, cfg.calib_frames + cfg.max_offset, cfg, spec)

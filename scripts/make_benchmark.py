@@ -1,0 +1,286 @@
+"""Benchmark datasets with ground truth: the clothed human of mister4d.human on the studio set.
+
+    python scripts/make_benchmark.py dataset OUT --width 960 --height 540 --frames 12
+    python scripts/make_benchmark.py raw OUT --width 960 --height 540 --frames 30
+    python scripts/make_benchmark.py sheets DATASET   # contact sheets of an existing dataset
+
+Development tool: it needs the package installed (run it with the Python of .venv).
+
+A dataset is what the pipeline has after "prepare" (pinhole cameras), plus:
+  background/<cam>.png          the empty set
+  masks/<cam>/<frame>.png       from "mister4d masks" (plate difference), NOT the true ones
+  init_points.ply               from "mister4d init --exclude <verification cameras>"
+  truth/<cam>/<frame>.npz       depth (float32, metres along the optical axis, 0 = no subject)
+                                and mask (uint8, true coverage 0..255)
+  truth/cameras.json            {"train": [...], "verify": [...]}
+Training cameras cam01.. sit on an arc around the subject like the demo rig;
+verification cameras ver01.. are in the gaps, beyond one end and higher up,
+and must never be used for init or training.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from mister4d import cli
+from mister4d.camera import Camera, Rig, look_at
+from mister4d.dataset import frame_name, write_meta
+from mister4d.human import StudioView, human_at, load_human
+from mister4d.synth import SynthConfig, make_raw_session
+
+TARGET = np.array([0.0, 0.0, 1.08])
+RADIUS = 3.0
+VIEW_METRES = 2.36  # height seen at the subject: a 1.77 m person fills 75% of the image
+FPS = 30.0
+
+
+def bench_rig(width: int, height: int, train: int = 4, arc: float = 150.0) -> tuple[Rig, list[str], list[str]]:
+    """Training cameras on an arc like the demo rig, verification cameras between and around them."""
+    fy = height * RADIUS / VIEW_METRES
+    scale = width / 960.0
+    cams = {}
+
+    def add(name, az, z=None, elevation=None, k=0):
+        az = np.radians(az)
+        if elevation is None:
+            eye = np.array([RADIUS * np.cos(az), RADIUS * np.sin(az), z])
+        else:
+            el = np.radians(elevation)
+            d = np.hypot(RADIUS, 1.4 - TARGET[2])
+            eye = TARGET + d * np.array([np.cos(el) * np.cos(az), np.cos(el) * np.sin(az), np.sin(el)])
+        R, t = look_at(eye, TARGET)
+        K = [[fy, 0, (width - 1) / 2 + 3.0 * (k - 1) * scale], [0, fy, (height - 1) / 2 - 2.0 * k * scale], [0, 0, 1]]
+        cams[name] = Camera(name, width, height, K, np.zeros(5), R, t)
+
+    az = np.linspace(-arc / 2, arc / 2, train) if train > 1 else np.array([0.0])
+    names_train = [f"cam{i + 1:02d}" for i in range(train)]
+    for i, name in enumerate(names_train):
+        add(name, az[i], z=1.4 + (0.25 if i % 2 else -0.1), k=i)
+    verify = [(a + b) / 2 for a, b in zip(az[:-1], az[1:])]  # the middle of every gap
+    k = 0
+    for a in verify:
+        k += 1
+        add(f"ver{k:02d}", a, z=1.4, k=k)
+    add(f"ver{k + 1:02d}", az[-1] + 25.0, z=1.4, k=k + 1)  # beyond one end of the arc
+    base = np.degrees(np.arctan2(1.4 - TARGET[2], RADIUS))
+    add(f"ver{k + 2:02d}", 0.0, elevation=base + 25.0, k=k + 2)  # middle of the arc, 25 degrees higher
+    names_verify = [n for n in cams if n.startswith("ver")]
+    volume = {"center": [0.0, 0.0, 1.1], "size": [2.4, 2.4, 2.4]}
+    return Rig(cams, volume=volume, undistorted=True), names_train, names_verify
+
+
+def hand_speed(frame: int) -> float:
+    """Speed of the tip of the right middle finger between frame - 1 and frame, m/s."""
+    h = load_human()
+    tip = int(np.argmax(h.skin_bones[:, 0] == h.index["finger3-3.R"]))
+    return float(np.linalg.norm(human_at(frame / FPS).verts[tip] - human_at((frame - 1) / FPS).verts[tip]) * FPS)
+
+
+def fastest_window(count: int, last: int = 60) -> int:
+    speeds = np.array([hand_speed(f) for f in range(1, last + 1)])
+    means = [speeds[i:i + count].mean() for i in range(len(speeds) - count + 1)]
+    return int(np.argmax(means)) + 1
+
+
+def make_dataset(out: Path, width: int, height: int, first: int, frames: int, train: int = 4,
+                 arc: float = 150.0, noise: float = 1.5, seed: int = 0, points: int | None = None) -> Path:
+    out = Path(out)
+    rig, names_train, names_verify = bench_rig(width, height, train, arc)
+    rng = np.random.default_rng(seed)
+    ids = list(range(first, first + frames))
+    t0 = time.time()
+    for name, cam in rig.cameras.items():
+        view = StudioView(cam)
+        for sub in ("images", "masks", "truth"):
+            (out / sub / name).mkdir(parents=True, exist_ok=True)
+        (out / "background").mkdir(exist_ok=True)
+        cv2.imwrite(str(out / "background" / f"{name}.png"),
+                    cv2.cvtColor((view.background * 255.0 + 0.5).astype(np.uint8), cv2.COLOR_RGB2BGR))
+        for fid in ids:
+            image, cover, depth = view.render(fid / FPS)
+            noisy = image * 255.0 + rng.normal(0.0, noise, size=image.shape)
+            cv2.imwrite(str(out / "images" / name / f"{frame_name(fid)}.png"),
+                        cv2.cvtColor(np.clip(noisy + 0.5, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+            np.savez_compressed(out / "truth" / name / f"{frame_name(fid)}.npz", depth=depth.astype(np.float32),
+                                mask=(cover * 255.0 + 0.5).astype(np.uint8))
+    rig.save(out / "calibration.json")
+    write_meta(out, FPS, ids, rig.names, {"source": "synthetic human (make_benchmark.py)",
+                                          "hand_speed_m_s": [round(hand_speed(f), 2) for f in ids]})
+    (out / "truth" / "cameras.json").write_text(json.dumps({"train": names_train, "verify": names_verify}, indent=2))
+    print(f"[bench] {out}: {len(rig.names)} cameras x {frames} frames at {width}x{height} "
+          f"in {time.time() - t0:.0f} s")
+    # Masks and initial points exactly as a user would get them.
+    assert cli.main(["masks", str(out)]) == 0
+    init = ["init", str(out), "--exclude", *names_verify]
+    if points:
+        init += ["--points", str(points)]
+    assert cli.main(init) == 0
+    report_masks(out)
+    return out
+
+
+def report_masks(out: Path) -> None:
+    """How far the masks of the pipeline are from the true coverage."""
+    meta = json.loads((out / "meta.json").read_text())
+    ious = []
+    for cam in meta["cameras"]:
+        for fid in meta["frame_ids"]:
+            mask = cv2.imread(str(out / "masks" / cam / f"{frame_name(fid)}.png"), cv2.IMREAD_GRAYSCALE) > 127
+            truth = np.load(out / "truth" / cam / f"{frame_name(fid)}.npz")["mask"] > 127
+            ious.append((mask & truth).sum() / max((mask | truth).sum(), 1))
+    print(f"[bench] masks from the pipeline against true coverage: IoU mean {np.mean(ious):.3f}, "
+          f"worst {np.min(ious):.3f}")
+
+
+def make_raw(out: Path, width: int, height: int, frames: int, cameras: int = 4, seed: int = 0) -> Path:
+    cfg = SynthConfig(num_cameras=cameras, width=width, height=height, take_frames=frames, seed=seed,
+                      subject="human")
+    make_raw_session(out, cfg)
+    return Path(out)
+
+
+def check_raw(out: Path) -> float:
+    """Ingest and calibrate the raw session as the demo does; returns the RMS error in pixels."""
+    assert cli.main(["ingest", str(out / "raw" / "calib"), "--out", str(out / "work" / "calib"),
+                     "--sync", "audio", "--start", "8"]) == 0
+    assert cli.main(["calibrate", str(out / "work" / "calib"), "--out", str(out / "work" / "calibration.json")]) == 0
+    rig, truth = Rig.load(out / "work" / "calibration.json"), Rig.load(out / "gt" / "calibration.json")
+    print(f"[bench] calibration RMS {rig.report['rms_px']:.3f} px; focal length error "
+          + ", ".join(f"{n} {abs(rig.cameras[n].K[0, 0] / truth.cameras[n].K[0, 0] - 1) * 100:.2f}%" for n in rig.names))
+    return float(rig.report["rms_px"])
+
+
+# ---------------------------------------------------------------------------
+# Contact sheets
+# ---------------------------------------------------------------------------
+
+
+def _label(img: np.ndarray, text: str) -> np.ndarray:
+    img = np.ascontiguousarray(img)
+    cv2.putText(img, text, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.putText(img, text, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+    return img
+
+
+def _grid(tiles: list[np.ndarray], cols: int) -> np.ndarray:
+    while len(tiles) % cols:
+        tiles.append(np.zeros_like(tiles[0]))
+    return np.concatenate([np.concatenate(tiles[i:i + cols], axis=1) for i in range(0, len(tiles), cols)], axis=0)
+
+
+def _turbo(depth: np.ndarray) -> np.ndarray:
+    on = depth > 0
+    lo, hi = (depth[on].min(), depth[on].max()) if on.any() else (0.0, 1.0)
+    d = np.clip((depth - lo) / max(hi - lo, 1e-6), 0, 1)
+    out = cv2.applyColorMap((255 - d * 220).astype(np.uint8), cv2.COLORMAP_TURBO)
+    out[~on] = 0
+    return out
+
+
+def sheets(data: Path, out_dir: Path | None = None, scale: float = 1.0) -> list[Path]:
+    """Images, masks (pipeline in green, missed in red, extra in blue) and depth of a dataset."""
+    data = Path(data)
+    out_dir = Path(out_dir or data)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    meta = json.loads((data / "meta.json").read_text())
+    ids, cams = meta["frame_ids"], meta["cameras"]
+    mid = ids[len(ids) // 2]
+    written = []
+
+    def tile(cam, fid, what):
+        truth = np.load(data / "truth" / cam / f"{frame_name(fid)}.npz")
+        if what == "image":
+            img = cv2.imread(str(data / "images" / cam / f"{frame_name(fid)}.png"))
+        elif what == "mask":
+            mask = cv2.imread(str(data / "masks" / cam / f"{frame_name(fid)}.png"), cv2.IMREAD_GRAYSCALE) > 127
+            true = truth["mask"] > 127
+            img = np.zeros(mask.shape + (3,), np.uint8)
+            img[mask & true] = (90, 200, 90)
+            img[~mask & true] = (40, 40, 255)
+            img[mask & ~true] = (255, 120, 40)
+        else:
+            img = _turbo(truth["depth"])
+        if scale != 1.0:
+            img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST if what != "image" else cv2.INTER_CUBIC)
+        return _label(img, f"{cam} f{fid}")
+
+    for what in ("image", "mask", "depth"):
+        path = out_dir / f"{data.name}_{what}s.png"
+        cv2.imwrite(str(path), _grid([tile(c, mid, what) for c in cams], 3))
+        written.append(path)
+    if len(ids) > 3:  # the motion, as seen by the first two training cameras and one verification camera
+        pick = [cams[0], cams[1], [c for c in cams if c.startswith("ver")][1]]
+        path = out_dir / f"{data.name}_motion.png"
+        cv2.imwrite(str(path), _grid([tile(c, f, "image") for c in pick for f in ids[::2]], len(ids[::2])))
+        written.append(path)
+    return written
+
+
+def closeups(out: Path, frames=(0, 14, 26, 50), height: int = 900) -> Path:
+    """The subject as the benchmark cameras see it, large enough to judge how real it looks."""
+    rig, names_train, names_verify = bench_rig(height * 16 // 9, height)
+    rows = []
+    for fid in frames:
+        row = []
+        for name in (names_train[0], names_train[1], names_verify[1], names_train[2], names_train[3], names_verify[4]):
+            cam = rig.cameras[name]
+            image, cover, _ = StudioView(cam).render(fid / FPS)
+            cols = np.nonzero(cover.max(axis=0) > 0.5)[0]
+            centre = int(np.clip((cols.min() + cols.max()) // 2, height * 0.3, cam.width - height * 0.3))
+            crop = image[:, centre - int(height * 0.3):centre + int(height * 0.3)]
+            row.append(_label(cv2.cvtColor((crop * 255 + 0.5).astype(np.uint8), cv2.COLOR_RGB2BGR), f"{name} f{fid}"))
+        rows.append(np.concatenate(row, axis=1))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out), np.concatenate(rows, axis=0))
+    return out
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="what", required=True)
+    p = sub.add_parser("dataset")
+    p.add_argument("out")
+    p.add_argument("--width", type=int, default=480)
+    p.add_argument("--height", type=int, default=270)
+    p.add_argument("--first", type=int, default=None, help="first frame of the action (default: the fastest part)")
+    p.add_argument("--frames", type=int, default=3)
+    p.add_argument("--train-cameras", type=int, default=4)
+    p.add_argument("--arc", type=float, default=150.0)
+    p.add_argument("--noise", type=float, default=1.5)
+    p.add_argument("--points", type=int, default=None, help="total initial points (default: that of 'mister4d init')")
+    p.add_argument("--seed", type=int, default=0)
+    p = sub.add_parser("raw")
+    p.add_argument("out")
+    p.add_argument("--width", type=int, default=640)
+    p.add_argument("--height", type=int, default=360)
+    p.add_argument("--frames", type=int, default=30)
+    p.add_argument("--cameras", type=int, default=4)
+    p.add_argument("--seed", type=int, default=0)
+    p = sub.add_parser("sheets")
+    p.add_argument("data")
+    p.add_argument("--out", default=None)
+    p.add_argument("--scale", type=float, default=1.0)
+    p = sub.add_parser("closeups")
+    p.add_argument("out", help="image to write")
+    args = ap.parse_args()
+
+    if args.what == "dataset":
+        first = args.first if args.first is not None else fastest_window(args.frames)
+        make_dataset(Path(args.out), args.width, args.height, first, args.frames, args.train_cameras, args.arc,
+                     args.noise, args.seed, args.points)
+    elif args.what == "raw":
+        check_raw(make_raw(Path(args.out), args.width, args.height, args.frames, args.cameras, args.seed))
+    elif args.what == "sheets":
+        print(*sheets(Path(args.data), args.out, args.scale), sep="\n")
+    else:
+        print(closeups(Path(args.out)))
+
+
+if __name__ == "__main__":
+    main()

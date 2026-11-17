@@ -65,6 +65,9 @@ Da verificare sulla workstation:
   `mister4d doctor`;
 - riprese lunghe, scene leggere e versione per visore su una ripresa vera;
 - decadimento dell'opacità e compensazione dei colori su riprese vere;
+- le correzioni contro le Gaussiane ad ago e contro la nebbia (vedi
+  [docs/PIPELINE.md](docs/PIPELINE.md), «Qualità»): provate solo su CPU a
+  bassa risoluzione, vanno misurate su GPU con la persona di prova;
 - il lettore per Unity, mai aperto in Unity né provato su un visore;
 - qualità e tempi su riprese reali. I valori di default sono un punto di
   partenza.
@@ -213,6 +216,18 @@ mister4d demo --out sessions/demo --run
 Con la GPU lavora a piena risoluzione. Senza GPU usa immagini 240×135 e il
 rasterizzatore su CPU, e dura circa un quarto d'ora. Alla fine si apre
 `sessions/demo/player.html` con doppio clic.
+
+Il manichino serve a provare la pipeline in fretta. Per giudicare quanto il
+risultato sembra vero c'è una persona vestita, con mani, viso, capelli, stampa
+sulla felpa, su un set con pavimento a doghe, lampada e ombra a terra:
+
+```bash
+mister4d demo --out sessions/demo_persona --subject human --run
+```
+
+La figura deriva dai dati CC0 di MakeHuman (vedi [LICENZE.md](docs/LICENZE.md)).
+In due secondi sposta il peso, alza un braccio e saluta, gira la testa e fa un
+passo. Il gesto del braccio è veloce: la mano supera i 2 m/s.
 
 ### Risultato della demo
 
@@ -451,6 +466,7 @@ MISTER 4D Studio.bat   avvio di Studio con doppio clic (Windows)
 LICENSE           licenza
 unity/            componente per Unity (Quest 3) e descrizione del formato
 src/mister4d/     pacchetto Python, un modulo per passo
+  human.py        persona di prova per le riprese sintetiche (dati in assets/)
   run.py          lettura di una ripresa ricostruita, intera o a spezzoni
   lighten.py      copia leggera per visori autonomi
   launch.py       avvio di Studio: librerie, istanza unica, versione
@@ -458,7 +474,7 @@ src/mister4d/     pacchetto Python, un modulo per passo
   studio/         pagina di MISTER 4D Studio
   viewer/         player WebGL2 e colori (theme.css)
 configs/          opzioni di training
-scripts/          installazione (Windows e Linux), avvio di Studio (Linux)
+scripts/          installazione (Windows e Linux), avvio di Studio (Linux), strumenti di misura
 tests/            test automatici
 docs/             come funziona, licenze, pipeline, sessione di ripresa
 ```

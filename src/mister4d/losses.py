@@ -48,3 +48,13 @@ def scale_regularizer(scales: Tensor, max_scale: float, max_anisotropy: float) -
     too_big = F.relu(largest - max_scale).mean() / max_scale
     too_thin = F.relu(largest / smallest.clamp(min=1e-8) - max_anisotropy).mean()
     return too_big + 0.01 * too_thin
+
+
+def needle_penalty(scales: Tensor, max_ratio: float = 3.0) -> Tensor:
+    """Penalize Gaussians much longer in one direction than in the other two.
+
+    A disc lying on a surface is fine; a needle is what a Gaussian becomes when it hides
+    along the line of sight of one camera, and it shows as a streak from anywhere else.
+    """
+    ordered = scales.sort(dim=-1, descending=True).values
+    return F.relu(ordered[:, 0] / ordered[:, 1].clamp(min=1e-8) - max_ratio).mean()

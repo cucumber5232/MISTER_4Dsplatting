@@ -61,6 +61,12 @@ nessun font e nessuna icona di terzi. I caratteri sono quelli del sistema e i
 disegni sono SVG scritti a mano. Il server di Studio usa solo la libreria
 standard di Python.
 
+### Dati inclusi nel pacchetto
+
+| Dato | Licenza | Uso | Note |
+|---|---|---|---|
+| `src/mister4d/assets/human.npz`, ricavato da [MakeHuman](https://github.com/makehumancommunity/makehuman) | CC0 1.0 (dati di MakeHuman) | figura umana delle riprese sintetiche (`mister4d demo --subject human`) | Da MakeHuman vengono solo mesh di base, un target di forma, scheletro e pesi, tutti rilasciati CC0 (`LICENSE.md`, sezione C). Il programma MakeHuman è AGPL e non è usato né incluso. Vestiti, capelli e texture sono generati da `scripts/build_human_asset.py`. Dettagli in `src/mister4d/assets/HUMAN.md`. |
+
 ## 3. Che cosa è stato escluso
 
 Molti repository hanno un'etichetta MIT o Apache ma dipendono da codice Inria,

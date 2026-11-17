@@ -89,6 +89,11 @@ forza. Quelle che servono a ricomporre le immagini la riprendono subito. Le
 altre continuano a perderla, svaniscono e vengono tolte. Nelle prove la scena
 è risultata un po' più fedele vista da un punto nuovo, e con meno macchie.
 
+Il programma impedisce anche che una macchia diventi un ago sottile o più
+piccola di quello che le camere riescono a distinguere. Macchie così non si
+notano dalle camere, ma ingrandendo la scena si vedono come peli e strisce
+attorno al soggetto.
+
 ## Quanto pesa la scena
 
 Si può scegliere tra tre pesi: massimo dettaglio, bilanciata, leggera. Nella

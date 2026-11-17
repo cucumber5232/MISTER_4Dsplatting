@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import math
 import queue
 import random
 import threading
@@ -32,7 +33,7 @@ import yaml
 
 from .camera import describe_coverage, silhouette_coverage
 from .dataset import MultiViewDataset, read_meta, read_points_ply
-from .losses import psnr, scale_regularizer, ssim
+from .losses import needle_penalty, psnr, scale_regularizer, ssim
 from .model import (DynamicScene, estimate_velocities, init_gaussian_params, render_scene,
                     save_checkpoint)
 from .rasterizer import resolve_backend
@@ -59,6 +60,7 @@ class TrainConfig:
     sh_interval: int = 1000  # steps between SH degree increases
     init_duration: float = 1.0  # initial life of a Gaussian, in units of the init frame spacing
     init_velocities: bool = True  # start from the motion estimated between the init point clouds
+    init_flatten: float = 1.0  # < 1: start from discs lying on the visual hull, this much thinner across it
     learn_time_offsets: bool = False  # cameras not exposed together: learn their sub-frame offsets
     init_opacity: float = 0.1
     init_random_points: int = 20000  # used only when there is no init_points.ply
@@ -70,6 +72,12 @@ class TrainConfig:
     lambda_velocity: float = 0.05  # keeps motion that no camera can see from drifting
     max_scale: float = 0.05  # metres; larger Gaussians are penalized
     max_anisotropy: float = 10.0
+    lambda_ray_spread: float = 0.0  # a pixel should be made of one surface, not of layers spread in depth
+    lambda_opacity_entropy: float = 0.0  # a Gaussian should be either there or not: no fog
+    lambda_flat: float = 0.0  # Gaussians should be thin across the surface they lie on
+    lambda_needle: float = 0.02  # no Gaussian much longer in one direction than in the other two
+    min_scale_pixels: float = 0.5  # no Gaussian thinner than this many pixels of the training images (0 = off)
+    surface_start: float = 0.3  # the three terms above act from this share of the iterations
     random_background: bool = True
 
     # --- optimisation -------------------------------------------------------
@@ -97,6 +105,8 @@ class TrainConfig:
     prune_scale: float = 0.15  # metres; larger Gaussians are removed
     opacity_reset_every: int = 0  # 0 = never (resets hurt with few cameras)
     opacity_decay: float = 0.005  # share of its opacity a Gaussian loses each time it is drawn (0 = off)
+    opacity_decay_stop: float = 1.0  # the decay acts until this share of the iterations
+    prune_to_end: bool = True  # keep removing faint Gaussians after densification stops, and at the end
     max_gaussians: int = 2_000_000
 
     # --- runtime ------------------------------------------------------------
@@ -369,8 +379,13 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
         xyz, rgb, frames, frame_step = _initial_points(ds, cfg, static_frame, window)
         velocities = estimate_velocities(xyz, frames) if cfg.init_velocities and not static else None
         params = init_gaussian_params(xyz, rgb, frames, cfg.sh_degree, cfg.init_opacity,
-                                      cfg.init_duration * frame_step, velocities)
+                                      cfg.init_duration * frame_step, velocities, cfg.init_flatten)
     scene = DynamicScene(params, cfg.sh_degree, static).to(master)
+
+    # What the cameras cannot resolve must not be modelled: a Gaussian thinner than a pixel of the
+    # training images costs nothing there and shows as a hair or a speck when the view is enlarged.
+    focal = float(np.mean([ds.rig.cameras[c].K[0, 0] for c in train_cams]))
+    scale_floor = math.log(cfg.min_scale_pixels * cam_dist / focal) if cfg.min_scale_pixels > 0 else None
 
     refine = 0.1 if start is not None else 1.0  # an existing scene only needs small moves
     lrs = {"means": cfg.lr_means * cam_dist * refine, "scales": cfg.lr_scales, "quats": cfg.lr_quats,
@@ -484,7 +499,7 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
     t_start = time.time()
     ema_loss = None
 
-    def run_job(slot: int, job, active_sh: int):
+    def run_job(slot: int, job, active_sh: int, shaping: bool):
         """Forward pass of one batch on one device."""
         frame_index, cams, arrays = job
         dev = devices[slot]
@@ -492,7 +507,9 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
         viewmats, Ks = cam_tensors[str(dev)]
         sel = [cam_index[c] for c in cams]
         view = scene.view(dev)
-        options = dict(backend=backends[slot], antialiased=cfg.antialiased, active_sh_degree=active_sh)
+        spread = shaping and cfg.lambda_ray_spread > 0
+        options = dict(backend=backends[slot], antialiased=cfg.antialiased, active_sh_degree=active_sh,
+                       moments=spread)
         if offsets is None:
             renders = [render_scene(view, frame_index, viewmats[sel], Ks[sel], ds.width, ds.height, **options)]
         else:  # every camera at its own instant
@@ -526,16 +543,34 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                     state["scales"], cfg.max_scale, cfg.max_anisotropy)
             if state["velocities"] is not None and cfg.lambda_velocity > 0:
                 loss = loss + cfg.lambda_velocity / len(renders) * state["velocities"].norm(dim=-1).mean()
+            if cfg.lambda_needle > 0:
+                loss = loss + cfg.lambda_needle / len(renders) * needle_penalty(state["scales"])
+            if shaping and cfg.lambda_flat > 0:
+                loss = loss + cfg.lambda_flat / len(renders) * (
+                    state["scales"].min(dim=-1).values / state["scales"].max(dim=-1).values.detach()).mean()
+            if shaping and cfg.lambda_opacity_entropy > 0:
+                idx = state["active"]
+                base = torch.sigmoid(view.params["opacities"] if idx is None else view.params["opacities"][idx])
+                base = base.clamp(1e-6, 1.0 - 1e-6)
+                entropy = -(base * base.log() + (1.0 - base) * (1.0 - base).log())
+                loss = loss + cfg.lambda_opacity_entropy / len(renders) * entropy.mean()
+        if spread:
+            # Blended depth and squared depth give, pixel by pixel, how far apart in depth the
+            # Gaussians that make it are: sum_ij w_i w_j (z_i - z_j)^2 / 2 = alpha * E[z^2] - E[z]^2.
+            mom = torch.cat([r[3]["moments"] for r in renders])
+            apart = (alpha * mom[..., 1:2] - mom[..., 0:1] ** 2).clamp(min=0.0)
+            loss = loss + cfg.lambda_ray_spread * apart.sum() / (alpha.detach().sum() + 1.0) / 0.05 ** 2
         return loss, l1.detach(), infos
 
     try:
         for step in range(iterations):
             active_sh = min(cfg.sh_degree, step // max(cfg.sh_interval, 1))
+            shaping = step >= cfg.surface_start * iterations
             jobs = loader.next()
             if workers is None:
-                results = [run_job(0, jobs[0], active_sh)]
+                results = [run_job(0, jobs[0], active_sh, shaping)]
             else:
-                results = list(workers.map(lambda s: run_job(s, jobs[s], active_sh), range(len(devices))))
+                results = list(workers.map(lambda s: run_job(s, jobs[s], active_sh, shaping), range(len(devices))))
             loss = sum(r[0].to(master) for r in results) / len(results)
             l1 = float(np.mean([r[1].item() for r in results]))
 
@@ -545,6 +580,8 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                 opt.zero_grad(set_to_none=True)
             for sched in schedulers:
                 sched.step()
+            if scale_floor is not None:
+                scene.params["scales"].data.clamp_(min=scale_floor)
             if offset_opt is not None:
                 if step >= iterations // 10:  # once the scene has taken shape
                     offset_opt.step()
@@ -556,7 +593,7 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                 color_opt.zero_grad(set_to_none=True)
                 with torch.no_grad():  # no camera is the reference: the scene is their average
                     color_gain -= color_gain.mean(dim=0, keepdim=True)
-            if cfg.opacity_decay > 0 and start is None:
+            if cfg.opacity_decay > 0 and start is None and step < cfg.opacity_decay_stop * iterations:
                 # Every Gaussian that was drawn loses a little opacity: those the images need win it
                 # back at once, those that only fill space the cameras cannot tell apart fade away
                 # and are pruned. (Not when refining a finished scene: there nothing prunes.)
@@ -580,6 +617,12 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                 if (cfg.opacity_reset_every > 0 and step > 0 and step % cfg.opacity_reset_every == 0
                         and step < active.refine_stop_iter):
                     reset_opa(scene.params, optimizers, strategy_state, value=cfg.prune_opacity * 2.0)
+                if cfg.prune_to_end and step >= active.refine_stop_iter and (
+                        step % cfg.densify_every == 0 or step == iterations - 1):
+                    with torch.no_grad():  # what has faded since densification stopped
+                        faint = torch.sigmoid(scene.params["opacities"]) < cfg.prune_opacity
+                    if 0 < int(faint.sum()) < scene.num_gaussians:
+                        remove(scene.params, optimizers, strategy_state, faint)
 
             ema_loss = loss.item() if ema_loss is None else 0.9 * ema_loss + 0.1 * loss.item()
             last = step == iterations - 1
