@@ -238,6 +238,49 @@ negli altri.
 `eval`, `render`, `export` e `lighten` leggono il risultato attraverso
 `run.py` e non distinguono una ripresa intera da una a spezzoni.
 
+#### Scena intera: il set e la ripresa
+
+Con `init --full-scene` e `train --full-scene` la ripresa non viene ritagliata
+dal fondo. Il set non si muove, quindi viene ricostruito una volta sola e poi
+resta fisso sotto tutti gli istanti (`scenery.py`, e `scenery` in `model.py`).
+
+1. Immagini del set vuoto, una per camera (`background/`). Si usano quelle
+   registrate con `prepare --empty`. Se mancano vengono stimate dalla ripresa
+   come mediana nel tempo di ogni pixel.
+2. Punti di partenza del set (`scenery/init_points.ply`), senza modelli
+   esterni. Per ogni camera si fa scorrere un piano nella scena, si riportano
+   su di esso le immagini delle due camere più vicine e ogni pixel tiene il
+   piano su cui le immagini concordano meglio (correlazione normalizzata su
+   finestre 7×7). I piani sono di due famiglie: di fronte alla camera, 768 a
+   passo costante in profondità inversa, per pareti e fondali, e orizzontali,
+   uno ogni centimetro, per i pavimenti. Una profondità vale solo se un'altra
+   camera trova una superficie nello stesso punto (entro il 3%). Dove le
+   camere non concordano, per esempio su una parete uniforme, il punto prende
+   una media morbida delle profondità vicine.
+3. Punti di partenza di ciò che si muove: il visual hull, calcolato su tutto
+   ciò che differisce dal set vuoto, ombre comprese (`change/`). Queste
+   sagome servono solo a mettere le prime Gaussiane. Il training non usa
+   maschere.
+4. Training del set come scena statica sulle immagini del set vuoto, in
+   `run/scenery/`. Opzioni: `scenery_iterations` (default 7000),
+   `scenery_max_gaussians`, `scenery_max_scale`, `scenery_prune_scale`.
+5. Training della ripresa sulle immagini intere. Le Gaussiane del set sono
+   congelate e vengono disegnate insieme a quelle della ripresa, ma non
+   vengono più ottimizzate né densificate. Quello che cambia rispetto al set,
+   ombra del soggetto compresa, è descritto dalle Gaussiane della ripresa.
+
+Una ripresa lunga ha un solo set per tutti gli spezzoni. Nei file per il
+player le Gaussiane del set stanno all'inizio di ogni blocco con durata 255
+(sempre visibili), quindi player e lettore Unity le disegnano senza
+modifiche. In una ripresa a spezzoni il set viene ripetuto in ogni blocco.
+`lighten` lascia il set com'è e alleggerisce solo ciò che si muove.
+
+Prova su CPU (persona di prova, 4 camere, 240×135, 250 passi per fase): i
+punti di partenza del set, visti da tre camere di verifica, coprono dal 92 al
+99% dell'immagine con un errore mediano di 4–7 livelli su 255. Il set
+addestrato dà 22 dB sulle camere di verifica. Non è mai stato addestrato su
+GPU a piena risoluzione.
+
 #### Scene leggere: Gaussiane che durano più frame
 
 Con `init --frame-step K` la nuvola di partenza viene creata ogni K frame
@@ -443,6 +486,42 @@ punti di vista scende da 0,15 a 0,06. Con 150 passi la correzione è a metà e
 la tinta non cambia ancora. Serve quindi un training lungo. Non è stata
 provata su camere vere.
 
+### Open4DGS
+
+Open4DGS (Arizona State University e Contrast Media Labs, novembre 2026) è una
+pipeline completa per riprese con 27–45 camere. È fatta di due parti con
+licenze diverse: la preparazione (Open4DGS-Core) è MIT, l'addestratore
+(Open4DGS-Trigs) è AGPL-3.0. Dalla prima si può riusare il codice con la sua
+nota di copyright, dalla seconda solo le idee (vedi [LICENZE.md](LICENZE.md)).
+Finora non è stato copiato codice da nessuna delle due.
+
+Preso da lì come idea:
+
+- la scena intera, con una parte ferma e una in movimento, senza maschere nel
+  training (qui: [Scena intera](#scena-intera-il-set-e-la-ripresa));
+- i punti di partenza trovati confrontando le camere tra loro invece che dal
+  solo visual hull. Open4DGS usa una rete di corrispondenza densa (RoMa v2),
+  i cui pesi non hanno una licenza chiara per l'uso commerciale. Qui si usa
+  la scansione a piani, che non richiede modelli.
+
+Da prendere, in ordine:
+
+1. la durata iniziale di una Gaussiana in base alla velocità: le parti lente
+   nascono con una vita lunga e vengono seminate ogni pochi frame, le parti
+   veloci a ogni frame. È il rimedio diretto alle Gaussiane che vivono un
+   frame solo;
+2. il riposizionamento delle Gaussiane poco opache al posto della
+   densificazione, con un numero fisso di Gaussiane. gsplat ne ha già i
+   mattoni, con licenza Apache-2.0;
+3. il moto rigido continuo (rotazione e traslazione, con una curva di Bézier)
+   dell'articolo TRiGS, per Gaussiane che seguono un arto per molti frame.
+   Richiede di cambiare il formato del player e il lettore Unity;
+4. la sincronizzazione sotto il frame e la stima del rolling shutter dalle
+   immagini, per camere senza genlock.
+
+La guida di Open4DGS segnala come problema aperto che i soggetti ricostruiti
+restano un po' trasparenti. È lo stesso difetto misurato qui.
+
 ### Da provare
 
 Il riposizionamento periodico delle Gaussiane poco opache (*FreeTimeGS*,
@@ -451,7 +530,8 @@ non c'era nulla da ridistribuire. La densificazione che tiene conto del tempo
 (*Temporally Aware Densification*, 2026) e la modulazione del moto con la
 durata (*SharpTimeGS*). Per misurarle servono riprese con movimenti rapidi.
 
-Riferimenti: 4C4D, arXiv 2604.04063. FreeTimeGS, arXiv 2506.05348.
+Riferimenti: Open4DGS, github.com/ASU-NEM-Labs/open4dgs-core e
+open4dgs-trigs. TRiGS, arXiv 2604.00538. 4C4D, arXiv 2604.04063. FreeTimeGS, arXiv 2506.05348.
 SharpTimeGS, arXiv 2602.02989. Temporally Aware Densification, arXiv
 2606.23212.
 

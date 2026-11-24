@@ -25,9 +25,13 @@ from .trainer import TrainConfig, train
 SKIP_AFTER_SYNC = 8  # frames dropped after the clap / flash used for synchronisation
 
 
-def run_demo(out_dir: str | Path, cfg: SynthConfig, holdout: str = "cam02", log=print) -> Path:
+def run_demo(out_dir: str | Path, cfg: SynthConfig, holdout: str | None = "cam02", log=print,
+             full_scene: bool = False) -> Path:
+    """The whole pipeline on a synthetic session. ``holdout`` is the camera kept out to measure the
+    result (None = use them all); with ``full_scene`` the set is reconstructed too, without masks."""
     out = Path(out_dir)
     gpu = torch.cuda.is_available()
+    left_out = [holdout] if holdout else []
 
     make_raw_session(out, cfg, log=log)
 
@@ -44,15 +48,25 @@ def run_demo(out_dir: str | Path, cfg: SynthConfig, holdout: str = "cam02", log=
     data = out / "data"
     prepare_dataset(out / "work" / "take", calibration, data, empty_dir=out / "work" / "empty",
                     downscale=1 if gpu else 4, ext="png", log=log)
-    compute_masks(data, log=log)
-    visual_hull(data, exclude=[holdout], total_points=300_000 if gpu else 60_000, log=log)
+    points = 300_000 if gpu else 60_000
+    if full_scene:  # no masks: what changes with respect to the empty set, and the set itself
+        from .scenery import change_masks, estimate_plates, prepare_scenery
 
-    # 4. Train with one camera held out, then measure on it.
-    if gpu:
-        train_cfg = TrainConfig(holdout=[holdout])
+        estimate_plates(data, log=log)
+        change_masks(data, log=log)
+        visual_hull(data, exclude=left_out, total_points=points, log=log, masks="change")
+        prepare_scenery(data, exclude=left_out, points=400_000 if gpu else 30_000, log=log)
     else:
-        train_cfg = TrainConfig(holdout=[holdout], devices="cpu", views_per_step=3, iterations=1500,
-                                densify_start=400, max_gaussians=80_000, eval_every=500)
+        compute_masks(data, log=log)
+        visual_hull(data, exclude=left_out, total_points=points, log=log)
+
+    # 4. Train (with one camera held out, if any), then measure.
+    if gpu:
+        train_cfg = TrainConfig(holdout=left_out, full_scene=full_scene)
+    else:
+        train_cfg = TrainConfig(holdout=left_out, full_scene=full_scene, devices="cpu", views_per_step=3,
+                                iterations=1500, densify_start=400, max_gaussians=80_000, eval_every=500,
+                                scenery_iterations=1500, scenery_max_gaussians=120_000)
     run = out / "run"
     train(data, run, train_cfg)
     evaluate_run(run, log=log)

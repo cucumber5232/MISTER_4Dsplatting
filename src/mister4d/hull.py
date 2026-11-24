@@ -57,24 +57,28 @@ class _Grid:
         return pts.min(axis=0), pts.max(axis=0)
 
 
-def _load_masks(root: Path, cams: list[str], frame_id: int) -> dict[str, np.ndarray]:
-    return {cam: cv2.imread(str(root / "masks" / cam / f"{frame_name(frame_id)}.png"), cv2.IMREAD_GRAYSCALE)
+def _load_masks(root: Path, cams: list[str], frame_id: int, folder: str = "masks") -> dict[str, np.ndarray]:
+    return {cam: cv2.imread(str(root / folder / cam / f"{frame_name(frame_id)}.png"), cv2.IMREAD_GRAYSCALE)
             for cam in cams}
 
 
 def visual_hull(data_dir: str | Path, voxel: float = 0.015, frame_step: int = 1,
                 exclude: list[str] | None = None, min_views: int | None = None,
                 total_points: int = 600_000, max_points_per_frame: int = 15_000,
-                center=None, size=None, seed: int = 0, log=print) -> Path:
-    """Write ``init_points.ply``: surface points of the visual hull of every ``frame_step``-th frame."""
+                center=None, size=None, seed: int = 0, log=print, masks: str = "masks") -> Path:
+    """Write ``init_points.ply``: surface points of the visual hull of every ``frame_step``-th frame.
+
+    ``masks`` is the folder of the silhouettes: ``masks`` (the subject) or ``change``
+    (everything that differs from the empty set, see ``scenery.py``).
+    """
     root = Path(data_dir)
     meta = read_meta(root)
     rig = Rig.load(root / "calibration.json")
     cams = [c for c in meta["cameras"] if c not in (exclude or [])]
     if len(cams) < 2:
         raise RuntimeError("the visual hull needs at least two cameras")
-    if not (root / "masks" / cams[0]).is_dir():
-        raise FileNotFoundError(f"no masks in {root / 'masks'}: run 'mister4d masks' first")
+    if not (root / masks / cams[0]).is_dir():
+        raise FileNotFoundError(f"no masks in {root / masks}: run 'mister4d masks' first")
     ids = meta["frame_ids"]
     vol = rig.volume or {"center": [0, 0, 0], "size": [3, 3, 3]}
     center = np.array(center if center is not None else vol["center"], dtype=np.float64)
@@ -87,7 +91,7 @@ def visual_hull(data_dir: str | Path, voxel: float = 0.015, frame_step: int = 1,
     lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
     probes = sorted({frames[i] for i in np.linspace(0, len(frames) - 1, min(len(frames), 12)).round().astype(int)})
     for fi in probes:
-        occ = coarse.occupancy(_load_masks(root, cams, ids[fi]), min_views)
+        occ = coarse.occupancy(_load_masks(root, cams, ids[fi], masks), min_views)
         if occ.any():
             a, b = coarse.bounds(occ)
             lo, hi = np.minimum(lo, a), np.maximum(hi, b)
@@ -116,7 +120,7 @@ def visual_hull(data_dir: str | Path, voxel: float = 0.015, frame_step: int = 1,
     box_lo, box_hi = np.full(3, np.inf), np.full(3, -np.inf)
     empty = []
     for fi in frames:
-        occupied = fine.occupancy(_load_masks(root, cams, ids[fi]), min_views)
+        occupied = fine.occupancy(_load_masks(root, cams, ids[fi], masks), min_views)
         if not occupied.any():
             empty.append(ids[fi])
             continue

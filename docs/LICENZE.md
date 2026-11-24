@@ -32,6 +32,17 @@ usato, perché spesso ha licenze di sola ricerca o dipende da codice che le
 ha. Un'idea descritta in un articolo non è coperta dal diritto d'autore, ma
 può essere coperta da un brevetto (vedi §4, punto 1).
 
+Lo stesso vale per Open4DGS (novembre 2026). La parte di preparazione,
+Open4DGS-Core, ha licenza MIT: il suo codice si potrebbe riusare tenendo la
+nota di copyright, ma finora non è stato copiato. L'addestratore,
+Open4DGS-Trigs, ha licenza AGPL-3.0: se ne possono prendere solo le idee, e
+il suo codice non va copiato né adattato. I modelli che Open4DGS usa per i
+punti di partenza non vengono usati qui: i pesi di RoMa v2 non hanno una
+licenza dichiarata e contengono DINOv3, che ha una licenza propria, e quelli
+di MEMFOF sono stati allenati in parte su dati per uso non commerciale. Le
+riprese di esempio di Open4DGS sono solo per prove private non commerciali:
+niente di ricavato da quelle può essere mostrato o consegnato.
+
 ## 2. Dipendenze
 
 | Componente | Licenza | Uso | Note |

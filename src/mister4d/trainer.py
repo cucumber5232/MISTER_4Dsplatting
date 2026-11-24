@@ -34,8 +34,8 @@ import yaml
 from .camera import describe_coverage, silhouette_coverage
 from .dataset import MultiViewDataset, read_meta, read_points_ply
 from .losses import needle_penalty, psnr, scale_regularizer, ssim
-from .model import (DynamicScene, estimate_velocities, init_gaussian_params, render_scene,
-                    save_checkpoint)
+from .model import (DynamicScene, estimate_velocities, init_gaussian_params, load_checkpoint, render_scene,
+                    save_checkpoint, scenery_of)
 from .rasterizer import resolve_backend
 from .run import MANIFEST, SEGMENT_FRAMES, plan_segments, segment_dir, write_manifest
 
@@ -52,6 +52,13 @@ class TrainConfig:
     iterations: int = -1  # -1 = 250 per frame of the take (of each segment, for a long take), at least 7000
     segment_frames: int = SEGMENT_FRAMES  # a longer take is trained in segments of about this many frames (0 = never)
     segment_overlap: int = 2  # frames of context a segment sees beyond each of its ends
+
+    # --- the whole scene ----------------------------------------------------
+    full_scene: bool = False  # True: reconstruct the set too (no masks): first the empty set, then the take on it
+    scenery_iterations: int = -1  # steps for the empty set; -1 = 7000
+    scenery_max_gaussians: int = 1_500_000
+    scenery_max_scale: float = 1.0  # metres: floors and walls are made of large Gaussians
+    scenery_prune_scale: float = 3.0
 
     # --- model --------------------------------------------------------------
     static: bool = False  # True: plain 3DGS of one instant
@@ -256,6 +263,8 @@ def _merge_info(results: list[tuple[dict, torch.Tensor | None]], total: int, dev
         g = info["means2d"].grad
         g = (torch.zeros_like(info["means2d"]) if g is None else g).to(device)
         r = info["radii"].to(device)
+        if "count" in info:  # the scenery was drawn after them: it is not densified
+            g, r = g[:, :info["count"]], r[:, :info["count"]]
         if active is not None:
             idx = active.to(device)
             full_g = torch.zeros(g.shape[0], total, 2, dtype=g.dtype, device=device)
@@ -310,8 +319,9 @@ def apply_camera_colors(rgb: torch.Tensor, gains: list | None) -> torch.Tensor:
 
 @torch.no_grad()
 def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=False,
-                   time_offsets: dict | None = None, camera_colors: dict | None = None) -> dict:
-    """PSNR against the (masked) ground truth on a white background."""
+                   time_offsets: dict | None = None, camera_colors: dict | None = None,
+                   masked: bool = True) -> dict:
+    """PSNR against the ground truth: the subject on white, or the whole image when not ``masked``."""
     values = []
     for cam in cams:
         viewmats, Ks = ds.camera_tensors([cam], device)
@@ -321,7 +331,7 @@ def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=
             rgb, alpha, *_ = render_scene(scene, fi + shift, viewmats, Ks, ds.width, ds.height,
                                           backend=backend, antialiased=antialiased)
             rgb = apply_camera_colors(rgb, (camera_colors or {}).get(cam))
-            if mask is not None:
+            if mask is not None and masked:
                 gt = gt * mask + (1.0 - mask)
                 rgb = rgb + (1.0 - alpha)
             values.append(psnr(rgb.clamp(0, 1), gt))
@@ -331,15 +341,18 @@ def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=
 def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                   window: tuple[int, int] | None = None, core: tuple[int, int] | None = None,
                   fixed_offsets: dict | None = None, start: dict | None = None,
-                  fixed_colors: dict | None = None) -> tuple[Path, dict]:
+                  fixed_colors: dict | None = None, scenery: tuple[dict, int] | None = None,
+                  scenery_file: str | None = None) -> tuple[Path, dict]:
     """One training: the whole take, or the frames ``window`` of a long one.
 
     ``core`` are the frames this scene will be used for (the window without
     the context at its ends). ``fixed_offsets`` and ``fixed_colors`` are the time
     offsets and the colours of the cameras learned on an earlier segment.
     ``start`` are the parameters of an existing scene to refine instead of
-    starting from the visual hull (no densification then).
-    Returns the checkpoint and its summary.
+    starting from the visual hull (no densification then). ``scenery`` are the
+    frozen Gaussians of the empty set and their SH degree, drawn under every
+    instant; ``scenery_file`` is where their checkpoint is, relative to
+    ``out_dir``. Returns the checkpoint and its summary.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -349,7 +362,7 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
     devices = pick_devices(cfg.devices)
     master = devices[0]
     backends = warmup_backends(devices, cfg.backend)
-    ds = MultiViewDataset(data_dir, cache_gb=cfg.cache_gb)
+    ds = MultiViewDataset(data_dir, cache_gb=cfg.cache_gb, masks=not cfg.full_scene and scenery is None)
 
     unknown = [c for c in cfg.holdout if c not in ds.cameras]
     if unknown:
@@ -378,9 +391,13 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
     else:
         xyz, rgb, frames, frame_step = _initial_points(ds, cfg, static_frame, window)
         velocities = estimate_velocities(xyz, frames) if cfg.init_velocities and not static else None
-        params = init_gaussian_params(xyz, rgb, frames, cfg.sh_degree, cfg.init_opacity,
+        # On a scenery a faint subject lets the set show through it: there it starts solid.
+        opacity = max(cfg.init_opacity, 0.5) if scenery is not None else cfg.init_opacity
+        params = init_gaussian_params(xyz, rgb, frames, cfg.sh_degree, opacity,
                                       cfg.init_duration * frame_step, velocities, cfg.init_flatten)
-    scene = DynamicScene(params, cfg.sh_degree, static).to(master)
+    scene = DynamicScene(params, cfg.sh_degree, static, *(scenery or (None, 0))).to(master)
+    # With the set in the scene the images are compared whole: no mask enters the training.
+    masked = ds.has_masks and not cfg.full_scene and scenery is None
 
     # What the cameras cannot resolve must not be modelled: a Gaussian thinner than a pixel of the
     # training images costs nothing there and shows as a hair or a speck when the view is enlarged.
@@ -466,6 +483,7 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
         # stays usable without the dataset next to it.
         "cameras": {name: cam.to_dict() for name, cam in ds.rig.cameras.items()},
         "volume": ds.rig.volume,
+        "scenery_file": scenery_file,
     }
     for cam in meta["cameras"].values():
         cam.pop("info", None)
@@ -476,7 +494,8 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
     print(f"[train] devices={[str(d) for d in devices]} backend={backends[0]} "
           f"cameras={train_cams} holdout={val_cams}")
     print(f"[train] frames={window[1] - window[0]} size={ds.width}x{ds.height} "
-          f"masks={'yes' if ds.has_masks else 'NO'} gaussians={scene.num_gaussians} "
+          f"masks={'yes' if masked else 'NO'} gaussians={scene.num_gaussians} "
+          + (f"scenery={scene.num_scenery} " if scene.num_scenery else "") +
           f"model={'static, frame ' + str(static_frame) if static else 'dynamic'} "
           f"iterations={iterations} images/step={len(devices) * min(cfg.views_per_step, len(train_cams))}")
     coverage = silhouette_coverage([ds.rig.cameras[c] for c in train_cams], center)
@@ -485,7 +504,7 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
     if master.type == "cpu":
         print("[train] WARNING: no GPU in use: the CPU reference rasterizer is only meant for "
               "tests on tiny images")
-    if not ds.has_masks:
+    if not masked and not cfg.full_scene and scenery is None and ds.meta.get("source") != "empty set":
         print("[train] WARNING: training without masks: the background of every camera "
               "will be fitted too and will produce floaters")
 
@@ -504,6 +523,8 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
         frame_index, cams, arrays = job
         dev = devices[slot]
         gt, mask = _to_device(arrays, dev)
+        if not masked:
+            mask = None
         viewmats, Ks = cam_tensors[str(dev)]
         sel = [cam_index[c] for c in cams]
         view = scene.view(dev)
@@ -632,7 +653,7 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                 if (cfg.eval_every > 0 and step % cfg.eval_every == 0) or last:
                     record["psnr_" + ("holdout" if val_cams else "train")] = round(
                         evaluate_views(scene, ds, eval_frames, eval_cams, master, backends[0],
-                                       cfg.antialiased, learned_offsets(), learned_colors())["psnr"], 2)
+                                       cfg.antialiased, learned_offsets(), learned_colors(), masked)["psnr"], 2)
                 log_file.write(json.dumps(record) + "\n")
                 log_file.flush()
                 print("[train] " + "  ".join(f"{k}={v}" for k, v in record.items()), flush=True)
@@ -658,7 +679,7 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
     # The outcome in a small text file, for tools that should not have to load the checkpoint.
     summary = {
         "iterations": iterations, "seconds": round(time.time() - t_start, 1),
-        "gaussians": scene.num_gaussians, "frames": core[1] - core[0], "fps": ds.fps,
+        "gaussians": scene.num_gaussians, "scenery": scene.num_scenery, "frames": core[1] - core[0], "fps": ds.fps,
         "train_cameras": train_cams, "holdout_cameras": val_cams, "devices": [str(d) for d in devices],
         "time_offsets": meta["time_offsets"], "camera_colors": meta["camera_colors"], "coverage": coverage}
     (out_dir / "train_summary.json").write_text(json.dumps(summary, indent=2))
@@ -679,6 +700,33 @@ def _fingerprint(data_dir: Path) -> str:
     return hashlib.sha1("|".join(parts).encode()).hexdigest()
 
 
+def _train_scenery(data_dir: Path, out_dir: Path, cfg: TrainConfig, resume: bool) -> Path:
+    """Reconstruct the empty set as a static scene in ``out_dir/scenery``; returns its checkpoint."""
+    source = data_dir / "scenery"
+    if not (source / "meta.json").exists():
+        raise FileNotFoundError(f"no {source}: run 'mister4d init {data_dir} --full-scene' first")
+    target = out_dir / "scenery"
+    target.mkdir(parents=True, exist_ok=True)
+    cameras = read_meta(source)["cameras"]
+    own = dataclasses.replace(
+        cfg, full_scene=False, static=True, static_frame=0, iterations=cfg.scenery_iterations,
+        max_gaussians=cfg.scenery_max_gaussians, max_scale=cfg.scenery_max_scale,
+        prune_scale=cfg.scenery_prune_scale, holdout=[c for c in cfg.holdout if c in cameras],
+        learn_time_offsets=False, learn_camera_colors=False)
+    tag = json.loads(json.dumps({
+        "fingerprint": _fingerprint(source),
+        "config": {k: v for k, v in dataclasses.asdict(own).items() if k not in _NOT_IN_RESULT}}))
+    tag_file = target / "segment.json"
+    if resume and (target / "ckpt.pt").exists() and tag_file.exists() and json.loads(tag_file.read_text()) == tag:
+        print("[train] the scenery is already trained with these data and options: kept", flush=True)
+    else:
+        tag_file.unlink(missing_ok=True)
+        print("[train] scenery: the empty set, as a static scene", flush=True)
+        _train_window(source, target, own)
+        tag_file.write_text(json.dumps(tag, indent=2))
+    return target / "ckpt.pt"
+
+
 def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig, resume: bool = True) -> Path:
     """Train a take; returns its checkpoint, or the manifest of its segments.
 
@@ -694,8 +742,14 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig, resume: b
     segments = [(0, num_frames)] if static else plan_segments(num_frames, cfg.segment_frames)
     manifest = out_dir / MANIFEST
     manifest.unlink(missing_ok=True)  # it is there only while every segment is
+    scenery, scenery_ckpt = None, None
+    if cfg.full_scene and not static:
+        scenery_ckpt = _train_scenery(data_dir, out_dir, cfg, resume)
+        scenery = scenery_of(load_checkpoint(scenery_ckpt)[0])
+        print(f"[train] take: what moves, on a scenery of {scenery[0]['means'].shape[0]} Gaussians", flush=True)
     if len(segments) == 1:
-        return _train_window(data_dir, out_dir, cfg)[0]
+        return _train_window(data_dir, out_dir, cfg, scenery=scenery,
+                             scenery_file="scenery/ckpt.pt" if scenery else None)[0]
 
     (out_dir / "ckpt.pt").unlink(missing_ok=True)  # of an earlier, shorter take
     identity = json.loads(json.dumps({
@@ -720,7 +774,8 @@ def train(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig, resume: b
             seg.mkdir(parents=True, exist_ok=True)
             tag_file.unlink(missing_ok=True)
             _, summary = _train_window(data_dir, seg, cfg, window=window, core=(first, last), fixed_offsets=offsets,
-                                       fixed_colors=colors)
+                                       fixed_colors=colors, scenery=scenery,
+                                       scenery_file="../scenery/ckpt.pt" if scenery else None)
             tag_file.write_text(json.dumps(tag, indent=2))
         if i == 0 and cfg.learn_time_offsets:
             offsets = summary["time_offsets"]  # one clock per camera for the whole take

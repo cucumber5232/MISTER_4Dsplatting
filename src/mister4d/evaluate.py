@@ -44,7 +44,8 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
     meta = take.meta
     backend = resolve_backend(take.config.get("backend", "auto"), dev)
     antialiased = bool(take.config.get("antialiased", False))
-    ds = MultiViewDataset(data_dir or meta["data_dir"])
+    whole = bool(take.config.get("full_scene")) or bool(meta.get("scenery_file"))  # the set is in the scene
+    ds = MultiViewDataset(data_dir or meta["data_dir"], masks=not whole)
     out = run / "eval"
     out.mkdir(exist_ok=True)
     frames = list(range(0, ds.num_frames, max(frame_step, 1)))
@@ -60,6 +61,8 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
             previous = None  # (frame index, render, ground truth) of the frame before
             for k, fi in enumerate(frames):
                 gt, mask = ds.batch(fi, [cam], dev)
+                if whole:
+                    mask = None
                 shift = take.time_offsets(fi).get(cam, 0.0)  # learned sub-frame offset
                 rgb, alpha, *_ = render_scene(take.scene_at(fi), fi + shift, viewmats, Ks, ds.width, ds.height,
                                               backend=backend, antialiased=antialiased)
@@ -76,8 +79,9 @@ def evaluate_run(run_dir: str | Path, data_dir: str | Path | None = None, frame_
                     pred = rgb.clamp(0, 1)
                     region = torch.ones_like(alpha[0, ..., 0], dtype=torch.bool)
                     iou = float("nan")
-                row = {"frame": ds.frame_ids[fi], "psnr": psnr(pred, gt), "ssim": float(ssim(pred, gt)),
-                       "iou": iou}
+                row = {"frame": ds.frame_ids[fi], "psnr": psnr(pred, gt), "ssim": float(ssim(pred, gt))}
+                if mask is not None:
+                    row["iou"] = iou
                 box = _crop_box(region)
                 if box is not None:
                     y0, y1, x0, x1 = box

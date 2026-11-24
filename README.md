@@ -65,6 +65,9 @@ Da verificare sulla workstation:
   `mister4d doctor`;
 - riprese lunghe, scene leggere e versione per visore su una ripresa vera;
 - decadimento dell'opacità e compensazione dei colori su riprese vere;
+- la ricostruzione della scena intera (`--full-scene`): i test automatici
+  passano e una prova a 240×135 su CPU funziona da capo a fondo, ma non è mai
+  stata addestrata su GPU a piena risoluzione;
 - le correzioni contro le Gaussiane ad ago e contro la nebbia (vedi
   [docs/PIPELINE.md](docs/PIPELINE.md), «Qualità»): provate solo su CPU a
   bassa risoluzione, vanno misurate su GPU con la persona di prova;
@@ -335,6 +338,30 @@ il lavoro si interrompe, lo stesso comando riparte dal primo spezzone mancante
 mister4d export runs/take01 --format web --out exports/take01
 ```
 
+### Scena intera
+
+Di norma il soggetto viene ritagliato dal fondo con le maschere. Con
+`--full-scene` si ricostruisce tutto, set compreso, e le maschere non
+servono. Prima viene ricostruito il set vuoto, come scena ferma. Poi sopra si
+ricostruisce quello che si muove, confrontando le immagini intere.
+
+```bash
+mister4d init data/take01 --full-scene --exclude cam02
+```
+
+```bash
+mister4d train data/take01 --out runs/take01_intera --full-scene --holdout cam02
+```
+
+Il passo `masks` si salta. Se il set vuoto non è stato registrato viene
+stimato dalla ripresa, e quello che resta fermo per tutta la ripresa finisce
+nel set. Con poche camere il set viene bene solo dai punti di vista vicini a
+quelli ripresi. Per provarlo senza camere:
+
+```bash
+mister4d demo --out sessions/demo_intera --subject human --full-scene --run
+```
+
 ### Scene leggere
 
 Con una nuvola di partenza ogni tre frame le Gaussiane vivono tre frame e si
@@ -467,6 +494,7 @@ LICENSE           licenza
 unity/            componente per Unity (Quest 3) e descrizione del formato
 src/mister4d/     pacchetto Python, un modulo per passo
   human.py        persona di prova per le riprese sintetiche (dati in assets/)
+  scenery.py      il set vuoto: immagini di riferimento e punti di partenza
   run.py          lettura di una ripresa ricostruita, intera o a spezzoni
   lighten.py      copia leggera per visori autonomi
   launch.py       avvio di Studio: librerie, istanza unica, versione

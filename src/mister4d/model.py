@@ -16,6 +16,12 @@ long-lived Gaussians.
 A static scene (plain 3DGS) is the special case with the temporal attributes
 switched off.
 
+A take can also carry its *scenery*: the Gaussians of the empty set, trained
+once as a static scene and then frozen. They are drawn together with every
+instant and are never optimised again, so that what moves is described only by
+the Gaussians of the take, and the set is the same from the first frame to the
+last.
+
 Written from scratch for this project on top of PyTorch; the only third-party
 rendering code involved is gsplat (Apache-2.0).
 """
@@ -32,6 +38,7 @@ from torch import Tensor, nn
 from .rasterizer import ALPHA_MIN, eval_sh, num_sh_bases, rgb_to_sh0
 
 MIN_DURATION = 0.35  # frames; shorter lives would alias between frames
+SCENERY_KEYS = ("means", "quats", "scales", "opacities", "sh")  # activated values, see scenery_of
 
 
 def estimate_velocities(xyz: np.ndarray, frames: np.ndarray, smooth: int = 8) -> np.ndarray:
@@ -170,10 +177,13 @@ class SceneView:
     step is spread over several GPUs: gradients flow back to the owner.
     """
 
-    def __init__(self, params: dict[str, Tensor], sh_degree: int, static: bool):
+    def __init__(self, params: dict[str, Tensor], sh_degree: int, static: bool,
+                 scenery: dict[str, Tensor] | None = None, scenery_degree: int = 0):
         self.params = params
         self.sh_degree = sh_degree
         self.static = static
+        self.scenery = scenery  # frozen Gaussians of the empty set, or None
+        self.scenery_degree = scenery_degree
 
     def state_at(self, frame: float | Tensor) -> dict[str, Tensor]:
         """Activated parameters of the Gaussians alive at ``frame`` (a frame index, may be fractional).
@@ -211,17 +221,52 @@ class SceneView:
         dirs = state["means"].detach()[None, :, :] - cam_centers[:, None, :]
         return eval_sh(degree, state["sh"], dirs)
 
+    def scenery_colors(self, cam_centers: Tensor) -> Tensor:
+        """Colours of the scenery [C, S, 3] ([S, 3] at SH degree 0)."""
+        dirs = self.scenery["means"][None, :, :] - cam_centers[:, None, :]
+        return eval_sh(self.scenery_degree, self.scenery["sh"], dirs)
+
+
+def scenery_of(scene: "DynamicScene", min_opacity: float = ALPHA_MIN) -> tuple[dict[str, Tensor], int]:
+    """A trained static scene as scenery: its visible Gaussians, activated and detached, and their SH degree."""
+    if not scene.static:
+        raise ValueError("the scenery must be a static scene")
+    state = scene.view().state_at(0)
+    keep = state["opacities"].detach() >= min_opacity
+    return {k: state[k].detach()[keep].clone() for k in SCENERY_KEYS}, scene.sh_degree
+
 
 class DynamicScene(nn.Module):
-    def __init__(self, params: nn.ParameterDict, sh_degree: int, static: bool = False):
+    def __init__(self, params: nn.ParameterDict, sh_degree: int, static: bool = False,
+                 scenery: dict[str, Tensor] | None = None, scenery_degree: int = 0):
         super().__init__()
         self.params = params
         self.sh_degree = sh_degree
         self.static = static
+        self.scenery_degree = int(scenery_degree)
+        self._scenery_on: dict[str, dict[str, Tensor]] = {}  # copies on other devices, made once
+        for key in SCENERY_KEYS:  # buffers: they follow the scene from device to device and are never optimised
+            self.register_buffer("scenery_" + key, None if scenery is None else scenery[key].detach().clone(),
+                                 persistent=False)
 
     @property
     def num_gaussians(self) -> int:
+        """Gaussians being optimised (the scenery is not counted)."""
         return int(self.params["means"].shape[0])
+
+    @property
+    def num_scenery(self) -> int:
+        return 0 if self.scenery_means is None else int(self.scenery_means.shape[0])
+
+    def scenery(self, device: torch.device | str | None = None) -> dict[str, Tensor] | None:
+        if self.scenery_means is None:
+            return None
+        device = self.device if device is None else torch.device(device)
+        if device == self.scenery_means.device:
+            return {k: getattr(self, "scenery_" + k) for k in SCENERY_KEYS}
+        if str(device) not in self._scenery_on:
+            self._scenery_on[str(device)] = {k: getattr(self, "scenery_" + k).to(device) for k in SCENERY_KEYS}
+        return self._scenery_on[str(device)]
 
     @property
     def device(self) -> torch.device:
@@ -229,9 +274,11 @@ class DynamicScene(nn.Module):
 
     def view(self, device: torch.device | str | None = None) -> SceneView:
         device = self.device if device is None else torch.device(device)
+        scenery = self.scenery(device)
         if device == self.device:
-            return SceneView(dict(self.params.items()), self.sh_degree, self.static)
-        return SceneView({k: v.to(device) for k, v in self.params.items()}, self.sh_degree, self.static)
+            return SceneView(dict(self.params.items()), self.sh_degree, self.static, scenery, self.scenery_degree)
+        return SceneView({k: v.to(device) for k, v in self.params.items()}, self.sh_degree, self.static,
+                         scenery, self.scenery_degree)
 
     def state_at(self, frame: float | Tensor) -> dict[str, Tensor]:
         return self.view().state_at(frame)
@@ -247,6 +294,10 @@ def render_scene(scene: DynamicScene | SceneView, frame: float | Tensor, viewmat
     the rasterizer info dict and the state of the Gaussians alive at ``frame``.
     With ``moments`` the info also holds ``moments`` [C,H,W,2]: the blended depth
     and squared depth of what every pixel is made of (not divided by alpha).
+
+    The scenery of the scene, if it has one, is drawn too: its Gaussians come
+    after those of the state in what is handed to the rasterizer, and
+    ``info["count"]`` says how many belong to the state.
     """
     from .rasterizer import opencv_to_render_K, render
 
@@ -254,35 +305,52 @@ def render_scene(scene: DynamicScene | SceneView, frame: float | Tensor, viewmat
     state = view.state_at(frame)
     cam_centers = -torch.einsum("cji,cj->ci", viewmats[:, :3, :3], viewmats[:, :3, 3])
     colors = view.colors(state, cam_centers, active_sh_degree)
+    means, quats, scales, opacities = state["means"], state["quats"], state["scales"], state["opacities"]
+    if view.scenery is not None:
+        behind = view.scenery_colors(cam_centers)
+        cams = viewmats.shape[0]
+        if colors.dim() != behind.dim():  # one of the two depends on the point of view
+            colors = colors if colors.dim() == 3 else colors[None].expand(cams, -1, -1)
+            behind = behind if behind.dim() == 3 else behind[None].expand(cams, -1, -1)
+        colors = torch.cat([colors, behind], dim=-2)
+        means = torch.cat([means, view.scenery["means"]])
+        quats = torch.cat([quats, view.scenery["quats"]])
+        scales = torch.cat([scales, view.scenery["scales"]])
+        opacities = torch.cat([opacities, view.scenery["opacities"]])
     if moments:  # depth and squared depth of every Gaussian, blended like two more colours
-        z = torch.einsum("cj,mj->cm", viewmats[:, 2, :3], state["means"]) + viewmats[:, 2, 3:4]
+        z = torch.einsum("cj,mj->cm", viewmats[:, 2, :3], means) + viewmats[:, 2, 3:4]
         if colors.dim() == 2:
             colors = colors[None].expand(z.shape[0], -1, -1)
         colors = torch.cat([colors, z[..., None], (z * z)[..., None]], dim=-1)
     rgb, alpha, depth, info = render(
-        state["means"], state["quats"], state["scales"], state["opacities"], colors,
+        means, quats, scales, opacities, colors,
         viewmats, opencv_to_render_K(Ks_opencv), width, height,
         backend=backend, antialiased=antialiased,
     )
+    if view.scenery is not None:
+        info["count"] = state["means"].shape[0]
     if moments:
         info["moments"], rgb = rgb[..., 3:5], rgb[..., :3]
     return rgb, alpha, depth, info, state
 
 
 def save_checkpoint(path, scene: DynamicScene, config: dict, meta: dict, step: int) -> None:
-    torch.save(
-        {
-            "format": "mister4d-checkpoint",
-            "version": 2,
-            "step": step,
-            "config": config,
-            "meta": meta,
-            "sh_degree": scene.sh_degree,
-            "static": scene.static,
-            "params": {k: v.detach().cpu() for k, v in scene.params.items()},
-        },
-        path,
-    )
+    """Write a scene. Its scenery is not copied into the file when ``meta["scenery_file"]`` says where it is
+    (a path relative to the folder of the checkpoint): a long take has one scenery for all its segments."""
+    data = {
+        "format": "mister4d-checkpoint",
+        "version": 2,
+        "step": step,
+        "config": config,
+        "meta": meta,
+        "sh_degree": scene.sh_degree,
+        "static": scene.static,
+        "params": {k: v.detach().cpu() for k, v in scene.params.items()},
+    }
+    if scene.num_scenery and not meta.get("scenery_file"):
+        data["scenery"] = {k: v.detach().cpu() for k, v in scene.scenery().items()}
+        data["scenery_degree"] = scene.scenery_degree
+    torch.save(data, path)
 
 
 def load_checkpoint(path, device: str | torch.device = "cpu") -> tuple[DynamicScene, dict]:
@@ -290,6 +358,15 @@ def load_checkpoint(path, device: str | torch.device = "cpu") -> tuple[DynamicSc
     if ckpt.get("format") != "mister4d-checkpoint" or ckpt.get("version") != 2:
         raise ValueError(f"{path}: not a mister4d checkpoint (version 2)")
     params = nn.ParameterDict({k: nn.Parameter(v) for k, v in ckpt["params"].items()})
-    scene = DynamicScene(params, ckpt["sh_degree"], ckpt["static"]).to(device)
+    scenery, degree = ckpt.get("scenery"), int(ckpt.get("scenery_degree", 0))
+    reference = ckpt["meta"].get("scenery_file")
+    if scenery is None and reference:
+        from pathlib import Path
+
+        source = Path(path).parent / reference
+        if not source.exists():
+            raise FileNotFoundError(f"{path}: the scenery of this take is missing ({source})")
+        scenery, degree = scenery_of(load_checkpoint(source)[0])
+    scene = DynamicScene(params, ckpt["sh_degree"], ckpt["static"], scenery, degree).to(device)
     scene.eval()
     return scene, ckpt

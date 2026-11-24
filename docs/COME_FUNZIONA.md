@@ -94,6 +94,15 @@ piccola di quello che le camere riescono a distinguere. Macchie così non si
 notano dalle camere, ma ingrandendo la scena si vedono come peli e strisce
 attorno al soggetto.
 
+## Anche il set, non solo la persona
+
+Di norma il programma ritaglia la persona e lascia fuori tutto il resto. Si
+può chiedere invece di ricostruire la scena intera. In quel caso il programma
+ricostruisce prima il set vuoto, che non si muove, e poi ci mette sopra
+quello che si muove. Se il set vuoto non è stato ripreso lo ricava dalla
+ripresa stessa, guardando che cosa resta fermo. Per ora questa scelta si fa
+solo da terminale.
+
 ## Quanto pesa la scena
 
 Si può scegliere tra tre pesi: massimo dettaglio, bilanciata, leggera. Nella

@@ -42,3 +42,9 @@ learn_time_offsets: false
 # Cameras that do not render colours alike (different models, automatic exposure
 # or white balance): also learn, per camera, a gain for red, green and blue.
 learn_camera_colors: false
+
+# The whole scene, set included, without masks (needs 'mister4d init --full-scene').
+# The empty set is reconstructed first, as a static scene, then the take on top of it.
+full_scene: false
+scenery_iterations: -1       # -1 = 7000
+scenery_max_gaussians: 1500000

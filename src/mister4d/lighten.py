@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import time
 from pathlib import Path
 
@@ -70,7 +71,12 @@ def contribution(scene, ds: MultiViewDataset, cams: list[str], frames, device, b
         if state["means"].shape[0] == 0:
             continue
         colors = torch.ones(state["means"].shape[0], 3, device=device, requires_grad=True)
-        rgb, *_ = render(state["means"], state["quats"], state["scales"], state["opacities"], colors,
+        drawn = {k: state[k] for k in ("means", "quats", "scales", "opacities")}
+        shown = colors
+        if view.scenery is not None:  # the set hides what is behind it, and takes no share
+            drawn = {k: torch.cat([v, view.scenery[k]]) for k, v in drawn.items()}
+            shown = torch.cat([colors, torch.zeros(view.scenery["means"].shape[0], 3, device=device)])
+        rgb, *_ = render(drawn["means"], drawn["quats"], drawn["scales"], drawn["opacities"], shown,
                          viewmats, Ks, ds.width, ds.height, backend=backend, antialiased=antialiased)
         (grad,) = torch.autograd.grad(rgb.sum(), colors)
         weight = grad[:, 0]
@@ -155,9 +161,17 @@ def lighten(run_dir: str | Path, out_dir: str | Path, budget: int, data_dir: str
             cfg = dataclasses.replace(base, iterations=steps, devices=devices, densify=False,
                                       eval_every=max(steps // 2, 1))
             offsets = meta.get("time_offsets") or None
+            scenery, scenery_file = None, None
+            if scene.num_scenery:  # the lighter copy stands on the same set: it is not copied
+                scenery = (scene.scenery(), scene.scenery_degree)
+                where = (src.segments[i][0] / meta["scenery_file"]).resolve()
+                scenery_file = os.path.relpath(where, seg.resolve()).replace(os.sep, "/")
+                log(f"[lighten] the scenery ({scene.num_scenery} Gaussians) is kept as it is: "
+                    "the budget is for what moves")
             path, summary = _train_window(data_dir, seg, cfg, window=tuple(meta.get("window") or (first, last)),
                                           core=(first, last), fixed_offsets=offsets, start=start,
-                                          fixed_colors=meta.get("camera_colors") or None)
+                                          fixed_colors=meta.get("camera_colors") or None,
+                                          scenery=scenery, scenery_file=scenery_file)
             refined, saved = load_checkpoint(path)
             if visible_at_once(refined, first, last) > budget:  # the budget is a promise: trim what went over
                 score = contribution(refined, ds, cams, frames, devs[0], backend, bool(base.antialiased))

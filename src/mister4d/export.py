@@ -34,6 +34,9 @@ uploaded to the GPU as they are:
 
 The chunk is then gzip-compressed. ``scene.json`` holds the ranges needed to
 turn the integers back into metres, frames and so on.
+
+The scenery of a take (the Gaussians of the empty set) goes first in every
+chunk, with life 255: the players already draw such Gaussians at any time.
 """
 
 from __future__ import annotations
@@ -60,7 +63,18 @@ def _alive(scene, frame: float, min_opacity: float) -> dict[str, np.ndarray]:
     """Gaussians visible at ``frame``, as numpy arrays (opacity already includes the temporal fade)."""
     state = scene.state_at(frame)
     keep = state["opacities"] >= min_opacity
-    return {k: state[k][keep].cpu().numpy() for k in ("means", "quats", "scales", "opacities", "sh")}
+    out = {k: state[k][keep].cpu().numpy() for k in ("means", "quats", "scales", "opacities", "sh")}
+    scenery = scene.scenery()
+    if scenery is not None:
+        keep = scenery["opacities"] >= min_opacity
+        for k in out:
+            more = scenery[k][keep].cpu().numpy()
+            if k == "sh" and more.shape[1] != out[k].shape[1]:  # same number of SH terms in one file
+                terms = out[k].shape[1]
+                more = np.concatenate([more[:, :terms], np.zeros((len(more), max(terms - more.shape[1], 0), 3),
+                                                                   dtype=more.dtype)], axis=1)
+            out[k] = np.concatenate([more, out[k]])
+    return out
 
 
 def _quantize(values: np.ndarray, lo, hi, levels: int) -> np.ndarray:
@@ -103,10 +117,27 @@ def pack_chunk(scene, first: int, last: int, min_opacity: float = 0.02) -> tuple
     log_scale = p["scales"][order].astype(np.float64)
     rgb = np.clip(p["sh0"][order][:, 0, :] * SH_C0 + 0.5, 0.0, 1.0)
 
-    box_lo, box_hi = means.min(axis=0) - 0.01, means.max(axis=0) + 0.01
     t_lo, t_span = float(time.min()), max(float(time.max() - time.min()), 1e-6)
     vel_max = max(float(np.percentile(np.abs(vel), 99.9)), 1e-6)
     dur_lo, dur_hi = float(np.log(MIN_DURATION)), max(float(np.log(sigma.max())), float(np.log(MIN_DURATION)) + 1e-6)
+
+    # The scenery: always there, so it goes with the long-lived ones, before everything else.
+    scenery, n_set = scene.scenery(), 0
+    if scenery is not None:
+        shown = (scenery["opacities"] >= min_opacity).cpu().numpy()
+        n_set = int(shown.sum())
+        pick = lambda key: scenery[key].cpu().numpy()[shown]  # noqa: E731
+        means = np.concatenate([pick("means"), means])
+        quats = np.concatenate([pick("quats"), quats])
+        log_scale = np.concatenate([np.log(pick("scales").astype(np.float64)), log_scale])
+        opacity = np.concatenate([pick("opacities").astype(np.float64), opacity])
+        rgb = np.concatenate([np.clip(pick("sh")[:, 0, :] * SH_C0 + 0.5, 0.0, 1.0), rgb])
+        vel = np.concatenate([np.zeros((n_set, 3), dtype=vel.dtype), vel])
+        time = np.concatenate([np.full(n_set, t_lo), time])
+        sigma = np.concatenate([np.full(n_set, MIN_DURATION), sigma])
+        reach = np.concatenate([np.full(n_set, np.inf), reach])
+        n, n_long = n + n_set, n_long + n_set
+    box_lo, box_hi = means.min(axis=0) - 0.01, means.max(axis=0) + 0.01
     ls_lo, ls_hi = float(log_scale.min()), float(log_scale.max()) + 1e-6
 
     a = np.empty((n, 4), dtype="<u2")
@@ -115,6 +146,7 @@ def pack_chunk(scene, first: int, last: int, min_opacity: float = 0.02) -> tuple
     b = np.empty((n, 4), dtype=np.uint8)
     b[:, :3] = np.sign(vel) * np.round(127.0 * np.sqrt(np.minimum(np.abs(vel) / vel_max, 1.0))) + 128
     b[:, 3] = ALWAYS if static else _quantize(np.log(sigma), dur_lo, dur_hi, 254)
+    b[:n_set, 3] = ALWAYS
     c = np.round(np.clip(quats, -1, 1) * 127.5 + 127.5).astype(np.uint8)
     d = np.empty((n, 4), dtype=np.uint8)
     d[:, :3] = _quantize(log_scale, ls_lo, ls_hi, 255)
@@ -127,7 +159,7 @@ def pack_chunk(scene, first: int, last: int, min_opacity: float = 0.02) -> tuple
     else:
         alive = [int(np.count_nonzero(np.abs(f - time) <= reach)) for f in range(first, last)]
     info = {
-        "first": int(first), "last": int(last), "count": n, "long": n_long,
+        "first": int(first), "last": int(last), "count": n, "long": n_long, "scenery": n_set,
         "reach": None if static else round(cap, 4),
         "bbox_min": box_lo.tolist(), "bbox_max": box_hi.tolist(),
         "time": [t_lo, t_span], "vel_max": vel_max, "life": [dur_lo, dur_hi], "log_scale": [ls_lo, ls_hi],

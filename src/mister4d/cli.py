@@ -80,8 +80,18 @@ def cmd_masks(args):
 def cmd_init(args):
     from .hull import visual_hull
 
+    if args.full_scene:
+        # The whole scene: plates of the empty set (recorded or estimated), what changes with respect
+        # to them (shadows included) for the first Gaussians of what moves, starting points of the set.
+        from .scenery import change_masks, estimate_plates, prepare_scenery
+
+        estimate_plates(args.data)
+        change_masks(args.data)
     visual_hull(args.data, voxel=args.voxel, frame_step=args.frame_step, exclude=args.exclude,
-                total_points=args.points, center=args.center, size=args.size)
+                total_points=args.points, center=args.center, size=args.size,
+                masks="change" if args.full_scene else "masks")
+    if args.full_scene:
+        prepare_scenery(args.data, exclude=args.exclude, points=args.scenery_points)
 
 
 def cmd_train(args):
@@ -94,6 +104,8 @@ def cmd_train(args):
         overrides.append(f"iterations={args.iterations}")
     if args.devices:
         overrides.append(f"devices={args.devices}")
+    if args.full_scene:
+        overrides.append("full_scene=true")
     train(args.data, args.out, load_config(args.config, overrides), resume=not args.fresh)
 
 
@@ -145,7 +157,8 @@ def cmd_demo(args):
     if args.run:
         from .demo import run_demo
 
-        run_demo(args.out, cfg)
+        run_demo(args.out, cfg, holdout=None if args.holdout == "none" else args.holdout,
+                 full_scene=args.full_scene)
     elif args.prepared:
         make_prepared_dataset(args.out, cfg)
         print(f"[demo] ready-to-train dataset in {args.out}")
@@ -219,6 +232,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--points", type=int, default=600000, help="total number of initial points")
     p.add_argument("--center", type=float, nargs=3, help="centre of the capture volume (m)")
     p.add_argument("--size", type=float, nargs=3, help="size of the capture volume (m)")
+    p.add_argument("--full-scene", action="store_true",
+                   help="prepare the whole scene, set included: no masks needed, the empty set is "
+                        "estimated from the take when it was not recorded")
+    p.add_argument("--scenery-points", type=int, default=400000, help="with --full-scene: starting points of the set")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("train", help="optimize the dynamic Gaussian scene (uses every GPU by default)")
@@ -231,6 +248,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--set", nargs="*", metavar="KEY=VALUE", help="override any config option")
     p.add_argument("--fresh", action="store_true",
                    help="train every segment of a long take again, even those already there")
+    p.add_argument("--full-scene", action="store_true",
+                   help="reconstruct the set too: first the empty set, then the take on top of it "
+                        "(needs 'init --full-scene')")
     p.set_defaults(func=cmd_train)
 
     p = sub.add_parser("lighten", help="a lighter copy of a trained take, for stand-alone headsets")
@@ -300,6 +320,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "set with a cast shadow, to judge how real the result looks")
     p.add_argument("--run", action="store_true",
                    help="also run every step, from the videos to the player")
+    p.add_argument("--full-scene", action="store_true",
+                   help="with --run: reconstruct the set too, without masks")
+    p.add_argument("--holdout", default="cam02",
+                   help="with --run: camera kept out of the training to measure the result; 'none' uses them all")
     p.add_argument("--prepared", action="store_true",
                    help="write a ready-to-train dataset instead of raw videos")
     p.set_defaults(func=cmd_demo)

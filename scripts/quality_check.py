@@ -14,6 +14,11 @@ eye reads as "fog" and "things flying around":
   floaters   share of the opacity that sits where there is nothing: outside the true silhouette
              of some camera, or more than 4 cm in front of the true surface
 
+A take reconstructed whole, set included, is compared on the full images: "psnr" and "ssim"
+are of the whole frame, "psnr_subject" of the box of the subject, and the scores made from alpha
+(iou, spill, holes, soft) are left out, because there the set is behind everything. "floaters"
+then also counts what the take adds outside the subject, such as its shadow on the floor.
+
 Cameras are split in "train" and "verify" (never used for the visual hull nor for training).
 The dataset needs truth/<cam>/<frame>.npz (depth, mask) and truth/cameras.json for depth and
 floaters (scripts/make_benchmark.py writes them); without them the rest is computed against
@@ -30,7 +35,7 @@ import torch
 from mister4d.dataset import MultiViewDataset, frame_name
 from mister4d.losses import psnr, ssim
 from mister4d.model import render_scene
-from mister4d.rasterizer import opencv_to_render_K, render, resolve_backend
+from mister4d.rasterizer import resolve_backend
 from mister4d.run import Run
 from mister4d.trainer import pick_device
 
@@ -49,7 +54,8 @@ a = p.parse_args()
 dev = pick_device(a.device)
 take = Run(a.run, dev)
 meta = take.meta
-ds = MultiViewDataset(a.data or meta["data_dir"])
+whole = bool(take.config.get("full_scene")) or bool(meta.get("scenery_file"))  # the set is in the scene
+ds = MultiViewDataset(a.data or meta["data_dir"], masks=not whole)
 backend = resolve_backend(take.config.get("backend", "auto"), dev)
 antialiased = bool(take.config.get("antialiased", False))
 out = Path(a.out or Path(a.run) / "evalq")
@@ -123,29 +129,32 @@ with torch.no_grad():
                     tdepth, tmask, m = None, mask[0, ..., 0].numpy(), mask
                 else:
                     continue
-                target = gt * m + (1.0 - m)
-                pred = (rgb + (1.0 - alpha)).clamp(0, 1)
                 al = alpha[0, ..., 0].numpy()
                 solid = tmask > 0.5
                 area = max(float(solid.sum()), 1.0)
-                box = box_of(solid | (al > 0.5))
-                near = cv2.dilate(solid.astype(np.uint8), kernel5, iterations=3) > 0  # the subject and a rim around it
-                outside = cv2.dilate(solid.astype(np.uint8), kernel3) == 0
-                inside = cv2.erode(solid.astype(np.uint8), kernel3) > 0
-                row = {"frame": int(ds.frame_ids[fi]), "psnr": psnr(pred, target), "ssim": float(ssim(pred, target)),
-                       "iou": float((solid & (al > 0.5)).sum() / max((solid | (al > 0.5)).sum(), 1)),
-                       "spill": float(al[outside].sum() / area), "holes": float((1.0 - al[inside]).sum() / area),
-                       "soft": float(((al > 0.05) & (al < 0.95) & near).sum() / max(near.sum(), 1))}
+                if whole:  # the images as they are: the set is part of the scene
+                    target, pred = gt, rgb.clamp(0, 1)
+                    box = box_of(solid)
+                    row = {"frame": int(ds.frame_ids[fi]), "psnr": psnr(pred, target), "ssim": float(ssim(pred, target))}
+                else:
+                    target = gt * m + (1.0 - m)
+                    pred = (rgb + (1.0 - alpha)).clamp(0, 1)
+                    box = box_of(solid | (al > 0.5))
+                    near = cv2.dilate(solid.astype(np.uint8), kernel5, iterations=3) > 0  # the subject and a rim around it
+                    outside = cv2.dilate(solid.astype(np.uint8), kernel3) == 0
+                    inside = cv2.erode(solid.astype(np.uint8), kernel3) > 0
+                    row = {"frame": int(ds.frame_ids[fi]), "psnr": psnr(pred, target), "ssim": float(ssim(pred, target)),
+                           "iou": float((solid & (al > 0.5)).sum() / max((solid | (al > 0.5)).sum(), 1)),
+                           "spill": float(al[outside].sum() / area), "holes": float((1.0 - al[inside]).sum() / area),
+                           "soft": float(((al > 0.05) & (al < 0.95) & near).sum() / max(near.sum(), 1))}
                 if box is not None:
                     y0, y1, x0, x1 = box
                     row["psnr_subject"] = psnr(pred[:, y0:y1, x0:x1], target[:, y0:y1, x0:x1])
                 # Thickness: what a pixel is made of, spread along the ray.
-                z_cam = (st["means"] @ viewmats[0, :3, :3].T + viewmats[0, :3, 3])[:, 2]
-                moments = torch.stack([z_cam, z_cam * z_cam, torch.zeros_like(z_cam)], dim=-1)
-                mom, _, _, _ = render(st["means"], st["quats"], st["scales"], st["opacities"], moments, viewmats,
-                                      opencv_to_render_K(Ks), W, H, backend=backend, antialiased=antialiased)
+                _, _, _, extra, _ = render_scene(scene, fi, viewmats, Ks, W, H, backend=backend,
+                                                 antialiased=antialiased, moments=True)
                 drawn = al > 0.5
-                mom = mom.cpu()
+                mom = extra["moments"].cpu()
                 mean_z = mom[0, ..., 0].numpy() / np.maximum(al, 1e-6)
                 var_z = np.maximum(mom[0, ..., 1].numpy() / np.maximum(al, 1e-6) - mean_z ** 2, 0.0)
                 if (drawn & solid).any():
@@ -155,6 +164,9 @@ with torch.no_grad():
                         if err.size:
                             row["depth_cm"] = float(np.median(err) * 100.0)
                             row["depth90_cm"] = float(np.percentile(err, 90) * 100.0)
+                if box is not None and whole:  # flicker where the subject is, not over the still set
+                    y0, y1, x0, x1 = box
+                    row["_box"] = (int(y0), int(y1), int(x0), int(x1))
                 rows[group][cam].append(row | {"_pred": pred, "_target": target})
                 # Where is each Gaussian, as this camera knows the truth?
                 if tdepth is not None:
@@ -188,18 +200,26 @@ with torch.no_grad():
             floaters.append({"train": float(opac[flagged["train"]].sum() / total),
                              "any": float(opac[flagged["train"] | flagged["verify"]].sum() / total)})
 
-KEYS = ("psnr_subject", "ssim", "iou", "spill", "holes", "soft", "depth_cm", "depth90_cm", "thick_cm", "flicker")
+KEYS = ("psnr", "psnr_subject", "ssim", "iou", "spill", "holes", "soft", "depth_cm", "depth90_cm", "thick_cm",
+        "flicker")
 summary = {"run": str(a.run), "frames": len(frames), "gaussians": take.num_gaussians,
-           "visible_per_frame": float(np.mean(visible)), "opaque_share": float(np.mean(opaque)), "needle_share": float(np.mean(needles)), "cameras": groups}
+           "visible_per_frame": float(np.mean(visible)), "opaque_share": float(np.mean(opaque)),
+           "needle_share": float(np.mean(needles)), "whole_scene": whole,
+           "scenery": int(take.scene_at(frames[0]).num_scenery), "cameras": groups}
 for group, cams in rows.items():
     per_cam = {}
     for cam, rs in cams.items():
         for prev, cur in zip(rs, rs[1:]):  # change between consecutive frames that is not in the footage
             if cur["frame"] - prev["frame"] == 1:
                 extra = (cur["_pred"] - prev["_pred"]) - (cur["_target"] - prev["_target"])
-                cur["flicker"] = float(extra.abs().mean() * 255.0 * (W * H) / max(float((cur["_target"] < 0.999).any(-1).sum()), 1.0))
+                if "_box" in cur:
+                    y0, y1, x0, x1 = cur["_box"]
+                    cur["flicker"] = float(extra[:, y0:y1, x0:x1].abs().mean() * 255.0)
+                else:
+                    cur["flicker"] = float(extra.abs().mean() * 255.0 * (W * H)
+                                           / max(float((cur["_target"] < 0.999).any(-1).sum()), 1.0))
         for r in rs:
-            r.pop("_pred"), r.pop("_target")
+            r.pop("_pred"), r.pop("_target"), r.pop("_box", None)
         per_cam[cam] = {k: float(np.mean([r[k] for r in rs if k in r])) for k in KEYS if any(k in r for r in rs)}
     summary[group] = {k: float(np.mean([c[k] for c in per_cam.values() if k in c])) for k in KEYS
                       if any(k in c for c in per_cam.values())}
@@ -218,6 +238,9 @@ def line(group):
     s = summary.get(group, {})
     pct = lambda k: f"{100 * s[k]:.1f}%" if k in s else "-"  # noqa: E731
     num = lambda k, d=2: f"{s[k]:.{d}f}" if k in s else "-"  # noqa: E731
+    if whole:
+        return (f"{group:6s} psnr={num('psnr')} psnr_subject={num('psnr_subject')} ssim={num('ssim', 3)} "
+                f"depth={num('depth_cm', 1)}cm thick={num('thick_cm', 1)}cm flicker={num('flicker')}")
     return (f"{group:6s} psnr={num('psnr_subject')} ssim={num('ssim', 3)} iou={num('iou', 3)} spill={pct('spill')} "
             f"holes={pct('holes')} soft={pct('soft')} depth={num('depth_cm', 1)}cm thick={num('thick_cm', 1)}cm "
             f"flicker={num('flicker')}")

@@ -10,6 +10,7 @@ A dataset is what the pipeline has after "prepare" (pinhole cameras), plus:
   background/<cam>.png          the empty set
   masks/<cam>/<frame>.png       from "mister4d masks" (plate difference), NOT the true ones
   init_points.ply               from "mister4d init --exclude <verification cameras>"
+  scenery/                      with --full-scene, instead of the masks: the empty set and its starting points
   truth/<cam>/<frame>.npz       depth (float32, metres along the optical axis, 0 = no subject)
                                 and mask (uint8, true coverage 0..255)
   truth/cameras.json            {"train": [...], "verify": [...]}
@@ -89,7 +90,8 @@ def fastest_window(count: int, last: int = 60) -> int:
 
 
 def make_dataset(out: Path, width: int, height: int, first: int, frames: int, train: int = 4,
-                 arc: float = 150.0, noise: float = 1.5, seed: int = 0, points: int | None = None) -> Path:
+                 arc: float = 150.0, noise: float = 1.5, seed: int = 0, points: int | None = None,
+                 full_scene: bool = False) -> Path:
     out = Path(out)
     rig, names_train, names_verify = bench_rig(width, height, train, arc)
     rng = np.random.default_rng(seed)
@@ -97,7 +99,7 @@ def make_dataset(out: Path, width: int, height: int, first: int, frames: int, tr
     t0 = time.time()
     for name, cam in rig.cameras.items():
         view = StudioView(cam)
-        for sub in ("images", "masks", "truth"):
+        for sub in ("images", "truth"):
             (out / sub / name).mkdir(parents=True, exist_ok=True)
         (out / "background").mkdir(exist_ok=True)
         cv2.imwrite(str(out / "background" / f"{name}.png"),
@@ -115,13 +117,17 @@ def make_dataset(out: Path, width: int, height: int, first: int, frames: int, tr
     (out / "truth" / "cameras.json").write_text(json.dumps({"train": names_train, "verify": names_verify}, indent=2))
     print(f"[bench] {out}: {len(rig.names)} cameras x {frames} frames at {width}x{height} "
           f"in {time.time() - t0:.0f} s")
-    # Masks and initial points exactly as a user would get them.
-    assert cli.main(["masks", str(out)]) == 0
+    # Masks and initial points exactly as a user would get them. For the whole scene there are no
+    # masks: the set gets its own starting points and the take starts from what changes.
     init = ["init", str(out), "--exclude", *names_verify]
     if points:
         init += ["--points", str(points)]
-    assert cli.main(init) == 0
-    report_masks(out)
+    if full_scene:
+        assert cli.main(init + ["--full-scene"]) == 0
+    else:
+        assert cli.main(["masks", str(out)]) == 0
+        assert cli.main(init) == 0
+        report_masks(out)
     return out
 
 
@@ -255,6 +261,8 @@ def main() -> None:
     p.add_argument("--noise", type=float, default=1.5)
     p.add_argument("--points", type=int, default=None, help="total initial points (default: that of 'mister4d init')")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--full-scene", action="store_true",
+                   help="prepare the whole scene, set included (train with 'mister4d train --full-scene')")
     p = sub.add_parser("raw")
     p.add_argument("out")
     p.add_argument("--width", type=int, default=640)
@@ -273,7 +281,7 @@ def main() -> None:
     if args.what == "dataset":
         first = args.first if args.first is not None else fastest_window(args.frames)
         make_dataset(Path(args.out), args.width, args.height, first, args.frames, args.train_cameras, args.arc,
-                     args.noise, args.seed, args.points)
+                     args.noise, args.seed, args.points, args.full_scene)
     elif args.what == "raw":
         check_raw(make_raw(Path(args.out), args.width, args.height, args.frames, args.cameras, args.seed))
     elif args.what == "sheets":

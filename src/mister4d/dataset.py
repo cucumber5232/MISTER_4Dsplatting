@@ -52,7 +52,7 @@ def update_meta(data_dir: str | Path, **fields) -> dict:
 
 
 class MultiViewDataset:
-    def __init__(self, data_dir: str | Path, cache_gb: float = 8.0):
+    def __init__(self, data_dir: str | Path, cache_gb: float = 8.0, masks: bool = True):
         self.root = Path(data_dir)
         self.meta = read_meta(self.root)
         self.rig = Rig.load(self.root / "calibration.json")
@@ -62,7 +62,9 @@ class MultiViewDataset:
         self.cameras = [c for c in self.meta["cameras"] if c in self.rig.cameras]
         self.frame_ids: list[int] = self.meta["frame_ids"]
         self.fps = float(self.meta["fps"])
-        self.has_masks = (self.root / "masks" / self.cameras[0]).is_dir()
+        # ``masks=False``: leave them on disk (a take reconstructed whole does not use them).
+        folder = self.root / "masks" / self.cameras[0]
+        self.has_masks = masks and folder.is_dir() and any(folder.iterdir())
         first = self.rig.cameras[self.cameras[0]]
         self.width, self.height = first.width, first.height
         for name in self.cameras:
