@@ -41,8 +41,13 @@ VIEW_METRES = 2.36  # height seen at the subject: a 1.77 m person fills 75% of t
 FPS = 30.0
 
 
-def bench_rig(width: int, height: int, train: int = 4, arc: float = 150.0) -> tuple[Rig, list[str], list[str]]:
-    """Training cameras on an arc like the demo rig, verification cameras between and around them."""
+def bench_rig(width: int, height: int, train: int = 4, arc: float = 150.0,
+              between: int | None = None) -> tuple[Rig, list[str], list[str]]:
+    """Training cameras on an arc like the demo rig, verification cameras between and around them.
+
+    ``between`` limits how many of the gaps between training cameras get a verification camera
+    (default: all of them); with many cameras a few, evenly spread, are enough.
+    """
     fy = height * RADIUS / VIEW_METRES
     scale = width / 960.0
     cams = {}
@@ -64,6 +69,8 @@ def bench_rig(width: int, height: int, train: int = 4, arc: float = 150.0) -> tu
     for i, name in enumerate(names_train):
         add(name, az[i], z=1.4 + (0.25 if i % 2 else -0.1), k=i)
     verify = [(a + b) / 2 for a, b in zip(az[:-1], az[1:])]  # the middle of every gap
+    if between is not None and between < len(verify):
+        verify = [verify[i] for i in sorted(set(np.linspace(0, len(verify) - 1, max(between, 1)).round().astype(int)))]
     k = 0
     for a in verify:
         k += 1
@@ -91,9 +98,9 @@ def fastest_window(count: int, last: int = 60) -> int:
 
 def make_dataset(out: Path, width: int, height: int, first: int, frames: int, train: int = 4,
                  arc: float = 150.0, noise: float = 1.5, seed: int = 0, points: int | None = None,
-                 full_scene: bool = False) -> Path:
+                 full_scene: bool = False, between: int | None = None) -> Path:
     out = Path(out)
-    rig, names_train, names_verify = bench_rig(width, height, train, arc)
+    rig, names_train, names_verify = bench_rig(width, height, train, arc, between)
     rng = np.random.default_rng(seed)
     ids = list(range(first, first + frames))
     t0 = time.time()
@@ -263,6 +270,8 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--full-scene", action="store_true",
                    help="prepare the whole scene, set included (train with 'mister4d train --full-scene')")
+    p.add_argument("--verify-between", type=int, default=None,
+                   help="verification cameras in the gaps between training cameras (default: one per gap)")
     p = sub.add_parser("raw")
     p.add_argument("out")
     p.add_argument("--width", type=int, default=640)
@@ -281,7 +290,7 @@ def main() -> None:
     if args.what == "dataset":
         first = args.first if args.first is not None else fastest_window(args.frames)
         make_dataset(Path(args.out), args.width, args.height, first, args.frames, args.train_cameras, args.arc,
-                     args.noise, args.seed, args.points, args.full_scene)
+                     args.noise, args.seed, args.points, args.full_scene, args.verify_between)
     elif args.what == "raw":
         check_raw(make_raw(Path(args.out), args.width, args.height, args.frames, args.cameras, args.seed))
     elif args.what == "sheets":
