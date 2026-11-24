@@ -105,6 +105,9 @@ deve essere il 3.10 perché gsplat già compilato per Windows esiste solo per
 quella versione. Con altre versioni gsplat va compilato a mano (istruzioni in
 `docs/INSTALL_WIN.md` nel repository di gsplat).
 
+La cartella del progetto deve avere un percorso senza lettere accentate,
+perché su Windows OpenCV non apre i file che ne contengono.
+
 In ogni nuovo terminale l'ambiente va attivato dalla cartella del progetto:
 
 ```bat
@@ -437,6 +440,27 @@ La prova è piccola e il soggetto si muove lentamente. Con movimenti rapidi la
 scena leggera può perdere nitidezza. Nessuna di queste scene è stata provata
 su un visore.
 
+## Scena di prova sulla workstation
+
+`Scena di prova su GPU.bat`, nella cartella del progetto, fa tutto da solo sul
+computer con le GPU: installa il programma se manca, crea le riprese della
+persona di prova sul set, ricostruisce la scena intera con un training lungo,
+misura il risultato e prepara player e video. Dura qualche ora.
+
+Fa tre scene, una dopo l'altra: una veloce che controlla soltanto che tutto
+funzioni su quel computer, poi 4 camere su un arco di 150° e 12 camere su un
+arco di 220°. Alla fine:
+
+- `consegna\` contiene, per ogni scena, `player.html` e `video.mp4`;
+- `risultati.zip` contiene misure, immagini di controllo e registri. È il
+  file da rimandare a chi sviluppa.
+
+Se si interrompe, riavviandolo riparte da dove era arrivato. Da terminale:
+
+```bash
+python scripts/scena_di_prova.py --only rig4
+```
+
 ## Training sulle GPU
 
 `train` usa tutte le GPU visibili (`devices: auto`). A ogni passo ogni GPU
@@ -490,6 +514,7 @@ insieme. I dettagli sono in [docs/PIPELINE.md](docs/PIPELINE.md).
 
 ```
 MISTER 4D Studio.bat   avvio di Studio con doppio clic (Windows)
+Scena di prova su GPU.bat   la scena di prova intera, dal nulla al player (Windows)
 LICENSE           licenza
 unity/            componente per Unity (Quest 3) e descrizione del formato
 src/mister4d/     pacchetto Python, un modulo per passo

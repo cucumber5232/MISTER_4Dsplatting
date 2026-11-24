@@ -54,6 +54,7 @@ niente di ricavato da quelle può essere mostrato o consegnato.
 | OpenCV (`opencv-python-headless`) | Apache-2.0 | ChArUco, undistort, immagini | La wheel include FFmpeg in versione LGPL. |
 | PyYAML | MIT | configurazione | |
 | jaxtyping, ninja, rich | MIT / Apache-2.0 / MIT | dipendenze di gsplat | |
+| packaging | Apache-2.0 oppure BSD-2-Clause | usato da gsplat, che non lo dichiara | |
 | pytest | MIT | solo sviluppo | |
 
 Strumenti esterni, non inclusi nel repository:

@@ -20,3 +20,9 @@ exports/
 *.pt
 *.ply
 charuco_*.png
+
+# What "Scena di prova su GPU" writes: things to show and the report to send back.
+consegna/
+risultati/
+risultati_prova/
+risultati*.zip

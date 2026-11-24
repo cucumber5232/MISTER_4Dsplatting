@@ -65,6 +65,13 @@ def run() -> int:
     else:
         _line(None, "nvcc not found: fine with a prebuilt gsplat wheel, otherwise gsplat cannot "
                     "compile its CUDA kernels on first use")
+    try:  # gsplat hides why its CUDA code does not load: ask for it directly
+        from gsplat import csrc  # noqa: F401
+
+        _line(True, "gsplat: its CUDA code is loaded")
+    except Exception as exc:  # noqa: BLE001 - this is a diagnostic tool
+        _line(False, f"gsplat: its CUDA code does not load: {type(exc).__name__}: {exc}")
+        failures += 1
     for i in range(count):
         try:
             diff = gpu_selftest(torch.device(f"cuda:{i}"))

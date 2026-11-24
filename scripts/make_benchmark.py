@@ -96,28 +96,44 @@ def fastest_window(count: int, last: int = 60) -> int:
     return int(np.argmax(means)) + 1
 
 
+def _render_camera(job) -> str:
+    """Everything one camera sees: the empty set, every frame with its noise, the truth."""
+    out, name, cam, ids, noise, seed = job
+    rng = np.random.default_rng(seed)
+    view = StudioView(Camera.from_dict(name, cam))
+    cv2.imwrite(str(out / "background" / f"{name}.png"),
+                cv2.cvtColor((view.background * 255.0 + 0.5).astype(np.uint8), cv2.COLOR_RGB2BGR))
+    for fid in ids:
+        image, cover, depth = view.render(fid / FPS)
+        noisy = image * 255.0 + rng.normal(0.0, noise, size=image.shape)
+        cv2.imwrite(str(out / "images" / name / f"{frame_name(fid)}.png"),
+                    cv2.cvtColor(np.clip(noisy + 0.5, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+        np.savez_compressed(out / "truth" / name / f"{frame_name(fid)}.npz", depth=depth.astype(np.float32),
+                            mask=(cover * 255.0 + 0.5).astype(np.uint8))
+    return name
+
+
 def make_dataset(out: Path, width: int, height: int, first: int, frames: int, train: int = 4,
                  arc: float = 150.0, noise: float = 1.5, seed: int = 0, points: int | None = None,
-                 full_scene: bool = False, between: int | None = None) -> Path:
+                 full_scene: bool = False, between: int | None = None, jobs: int = 1) -> Path:
     out = Path(out)
     rig, names_train, names_verify = bench_rig(width, height, train, arc, between)
-    rng = np.random.default_rng(seed)
     ids = list(range(first, first + frames))
     t0 = time.time()
-    for name, cam in rig.cameras.items():
-        view = StudioView(cam)
+    (out / "background").mkdir(parents=True, exist_ok=True)
+    for name in rig.cameras:
         for sub in ("images", "truth"):
             (out / sub / name).mkdir(parents=True, exist_ok=True)
-        (out / "background").mkdir(exist_ok=True)
-        cv2.imwrite(str(out / "background" / f"{name}.png"),
-                    cv2.cvtColor((view.background * 255.0 + 0.5).astype(np.uint8), cv2.COLOR_RGB2BGR))
-        for fid in ids:
-            image, cover, depth = view.render(fid / FPS)
-            noisy = image * 255.0 + rng.normal(0.0, noise, size=image.shape)
-            cv2.imwrite(str(out / "images" / name / f"{frame_name(fid)}.png"),
-                        cv2.cvtColor(np.clip(noisy + 0.5, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
-            np.savez_compressed(out / "truth" / name / f"{frame_name(fid)}.npz", depth=depth.astype(np.float32),
-                                mask=(cover * 255.0 + 0.5).astype(np.uint8))
+    work = [(out, name, cam.to_dict(), ids, noise, seed + 1000 * i) for i, (name, cam) in enumerate(rig.cameras.items())]
+    if jobs > 1:  # one camera per process: the rendering is the slow part
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(min(jobs, len(work))) as pool:
+            for name in pool.map(_render_camera, work):
+                print(f"[bench] {name} rendered ({time.time() - t0:.0f} s)", flush=True)
+    else:
+        for job in work:
+            _render_camera(job)
     rig.save(out / "calibration.json")
     write_meta(out, FPS, ids, rig.names, {"source": "synthetic human (make_benchmark.py)",
                                           "hand_speed_m_s": [round(hand_speed(f), 2) for f in ids]})
@@ -272,6 +288,7 @@ def main() -> None:
                    help="prepare the whole scene, set included (train with 'mister4d train --full-scene')")
     p.add_argument("--verify-between", type=int, default=None,
                    help="verification cameras in the gaps between training cameras (default: one per gap)")
+    p.add_argument("--jobs", type=int, default=1, help="cameras rendered at the same time, one process each")
     p = sub.add_parser("raw")
     p.add_argument("out")
     p.add_argument("--width", type=int, default=640)
@@ -290,7 +307,7 @@ def main() -> None:
     if args.what == "dataset":
         first = args.first if args.first is not None else fastest_window(args.frames)
         make_dataset(Path(args.out), args.width, args.height, first, args.frames, args.train_cameras, args.arc,
-                     args.noise, args.seed, args.points, args.full_scene, args.verify_between)
+                     args.noise, args.seed, args.points, args.full_scene, args.verify_between, args.jobs)
     elif args.what == "raw":
         check_raw(make_raw(Path(args.out), args.width, args.height, args.frames, args.cameras, args.seed))
     elif args.what == "sheets":
