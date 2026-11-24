@@ -10,6 +10,7 @@ dist/
 # Capture sessions, datasets, training runs and exports are data, not code.
 sessions/
 data/
+bench/
 runs/
 exports/
 *.mp4
