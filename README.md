@@ -443,9 +443,10 @@ su un visore.
 ## Scena di prova sulla workstation
 
 `Scena di prova su GPU.bat`, nella cartella del progetto, fa tutto da solo sul
-computer con le GPU: installa il programma se manca, crea le riprese della
-persona di prova sul set, ricostruisce la scena intera con un training lungo,
-misura il risultato e prepara player e video. Dura qualche ora.
+computer con le GPU: scarica gli aggiornamenti del programma (se la cartella è
+un clone git), lo installa se manca, crea le riprese della persona di prova
+sul set, ricostruisce la scena intera con un training lungo, misura il
+risultato e prepara player e video. Dura qualche ora.
 
 Fa più scene, una dopo l'altra.
 
