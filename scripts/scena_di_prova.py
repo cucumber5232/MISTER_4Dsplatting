@@ -17,9 +17,13 @@ player and a video.
     consegna/<scene>   player.html and video.mp4: what can be shown
     risultati/<scene>  measures, pictures and logs   risultati.zip      all of risultati/, to send back
 
-The first scene is a quick one: it only checks that everything runs on this machine. If it fails
-the long ones are not started. A scene already measured is skipped; a training that was
-interrupted continues from what it had finished.
+The first scene is a quick one: it only checks that everything runs on this machine, every time.
+If it fails the long ones are not started. A scene already measured is skipped; a training that
+was interrupted continues from what it had finished. risultati.zip is written again after every
+scene, so it can be sent before the last one is done.
+
+Some scenes are the same takes trained with different options. The scene to show is trained last,
+with the options of the trial that came out best on the cameras never used for training.
 """
 
 from __future__ import annotations
@@ -51,14 +55,54 @@ class Scene:
     scenery_iterations: int
     iterations: int
     between: int | None = None  # verification cameras between the training ones (None = one per gap)
+    high: int = 0  # more training cameras, 2.6 m above the floor
+    takes: str = ""  # the takes of this other scene: same cameras, same frames
+    scenery: str = ""  # the set trained for this other scene, when its takes and options are the same
+    options: tuple = ()  # training options of this scene only
+    best_of: tuple = ()  # trials: the options of the one that came out best are added
+    always: bool = False  # done again at every start
 
 
+TRIALS = ("rig12_b", "rig12_logit", "rig12_fermo", "rig12_solido")
 SCENES = [
-    Scene("prova_rapida", "controllo veloce: tutta la catena in piccolo", 4, 150.0, 480, 270, 8, 1500, 1500),
-    Scene("rig4", "4 camere su un arco di 150 gradi", 4, 150.0, 1280, 720, 60, 20000, 25000),
-    Scene("rig12", "12 camere su un arco di 220 gradi", 12, 220.0, 1280, 720, 60, 20000, 25000, between=3),
+    Scene("prova_rapida", "controllo veloce: tutta la catena in piccolo", 4, 150.0, 480, 270, 8, 1500, 1500,
+          high=1, always=True),
+    Scene("rig4", "4 camere su un arco di 150 gradi (prima prova)", 4, 150.0, 1280, 720, 60, 20000, 25000),
+    Scene("rig12", "12 camere su un arco di 220 gradi (prima prova)", 12, 220.0, 1280, 720, 60, 20000, 25000,
+          between=3),
+    Scene("rig12_b", "le riprese di rig12, con il set che non si consuma più", 12, 220.0, 1280, 720, 60, 20000,
+          25000, between=3, takes="rig12"),
+    Scene("rig12_logit", "come rig12_b, con il decadimento che risparmia le macchie piene", 12, 220.0, 1280, 720,
+          60, 20000, 25000, between=3, takes="rig12", scenery="rig12_b", options=("opacity_decay_logit=true",)),
+    Scene("rig12_fermo", "come rig12_b, senza decadimento nella ripresa", 12, 220.0, 1280, 720,
+          60, 20000, 25000, between=3, takes="rig12", scenery="rig12_b", options=("opacity_decay=0.0",)),
+    Scene("rig12_solido", "come rig12_b, con le macchie spinte a essere piene oppure vuote", 12, 220.0, 1280, 720,
+          60, 20000, 25000, between=3, takes="rig12", scenery="rig12_b", options=("lambda_opacity_entropy=0.005",)),
+    Scene("sala16", "la scena da mostrare: 12 camere su 220 gradi e 4 in alto, 1920x1080", 12, 220.0, 1920, 1080,
+          60, 30000, 40000, between=3, high=4, best_of=TRIALS),
+    Scene("rig4_b", "le riprese di rig4, con il set che non si consuma più", 4, 150.0, 1280, 720, 60, 20000,
+          25000, takes="rig4"),
 ]
 SMOKE = dict(width=160, height=90, frames=3, scenery_iterations=40, iterations=30)
+ROOTS = {"bench": "bench", "runs": "runs", "show": "consegna", "results": "risultati"}
+
+
+def subject_psnr(results: Path, name: str) -> float | None:
+    """How well a scene shows the subject from the cameras never trained on, or None if not measured."""
+    try:
+        return float(json.loads((results / name / "metrics.json").read_text())["verify"]["psnr_subject"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def best_trial(scene: Scene, results: Path) -> tuple[str, tuple]:
+    """The name and the options of the trial of ``scene`` that came out best ("" if none was measured)."""
+    measured = {name: subject_psnr(results, name) for name in scene.best_of}
+    measured = {name: value for name, value in measured.items() if value is not None}
+    if not measured:
+        return "", ()
+    best = max(measured, key=measured.get)
+    return best, next(s.options for s in SCENES if s.name == best)
 
 
 def say(text: str) -> None:
@@ -133,13 +177,24 @@ def environment(results: Path, smoke: bool) -> bool:
 
 def one(scene: Scene, args, results: Path) -> None:
     py, cli = sys.executable, [sys.executable, "-m", "mister4d.cli"]
-    data, run_dir = REPO / "bench" / scene.name, REPO / "runs" / scene.name
-    out, show = results / scene.name, REPO / "consegna" / scene.name
+    data, run_dir = REPO / ROOTS["bench"] / (scene.takes or scene.name), REPO / ROOTS["runs"] / scene.name
+    out, show = results / scene.name, REPO / ROOTS["show"] / scene.name
     out.mkdir(parents=True, exist_ok=True)
     show.mkdir(parents=True, exist_ok=True)
+    (out / "metrics.json").unlink(missing_ok=True)  # until it is measured again the scene is not done
+    options = list(scene.options)
     note = [f"# {scene.name}", "", scene.what + ".", "",
-            f"{scene.cameras} camere di training, {scene.width}x{scene.height}, {scene.frames} frame; "
+            f"{scene.cameras + scene.high} camere di training, {scene.width}x{scene.height}, {scene.frames} frame; "
             f"{scene.scenery_iterations} passi per il set, {scene.iterations} per la ripresa.", ""]
+    if scene.best_of:
+        best, extra = best_trial(scene, results)
+        options += extra
+        values = ", ".join(f"{n} {v:.2f}" for n in scene.best_of if (v := subject_psnr(results, n)) is not None)
+        note += [f"Opzioni prese dalla prova riuscita meglio ({best}): {' '.join(extra) or 'quelle normali'}. "
+                 f"PSNR del soggetto dalle camere di verifica: {values}." if best else
+                 "Nessuna prova misurata da cui prendere le opzioni: usate quelle normali.", ""]
+    if options:
+        note += ["Opzioni di training di questa scena: " + " ".join(options) + ".", ""]
     seconds = {}
 
     def step(name: str, cmd: list, needed: bool = True) -> bool:
@@ -158,6 +213,8 @@ def one(scene: Scene, args, results: Path) -> None:
         # 1. The takes, with the truth, prepared for the whole scene.
         wanted = dict(cameras=scene.cameras, arc=scene.arc, width=scene.width, height=scene.height, frames=scene.frames,
                       between=scene.between)
+        if scene.high:
+            wanted["high"] = scene.high
         made = data / "scena.json"
         if not (made.exists() and json.loads(made.read_text()) == wanted and (data / "scenery" / "meta.json").exists()):
             shutil.rmtree(data, ignore_errors=True)
@@ -166,6 +223,8 @@ def one(scene: Scene, args, results: Path) -> None:
                    "--full-scene", "--jobs", max(1, min(args.jobs, (os.cpu_count() or 2) - 1))]
             if scene.between is not None:
                 cmd += ["--verify-between", scene.between]
+            if scene.high:
+                cmd += ["--high", scene.high]
             if args.smoke:
                 cmd += ["--points", 3000]
             step("riprese", cmd)
@@ -175,9 +234,14 @@ def one(scene: Scene, args, results: Path) -> None:
         # 2. The whole scene: the empty set first, then the take on top of it.
         if args.redo:
             shutil.rmtree(run_dir, ignore_errors=True)
+        (run_dir / "evalq" / "metrics.json").unlink(missing_ok=True)  # measures of an earlier training
+        ready = REPO / ROOTS["runs"] / scene.scenery / "scenery" if scene.scenery else None
+        if ready and (ready / "ckpt.pt").exists() and not (run_dir / "scenery" / "ckpt.pt").exists():
+            shutil.rmtree(run_dir / "scenery", ignore_errors=True)
+            shutil.copytree(ready, run_dir / "scenery")  # kept by the training if data and options are the same
         cmd = [*cli, "train", data, "--out", run_dir, "--full-scene", "--holdout", *verify,
                "--set", f"scenery_iterations={scene.scenery_iterations}", f"iterations={scene.iterations}",
-               *args.set]
+               *options, *args.set]
         if args.devices:
             cmd += ["--devices", args.devices]
         step("training", cmd)
@@ -191,7 +255,8 @@ def one(scene: Scene, args, results: Path) -> None:
         # 4. What can be shown: the player and a video along the arc of the cameras.
         step("player", [*cli, "export", run_dir, "--out", show / "player.html"], needed=False)
         step("video", [*cli, "render", run_dir, "--out", show / "video.mp4", "--seconds", 0.3 if args.smoke else 12,
-                       "--width", min(1920, 2 * scene.width), "--height", min(1080, 2 * scene.height)], needed=False)
+                       "--width", min(1920, 2 * scene.width), "--height", min(1080, 2 * scene.height),
+                       "--margin", -5], needed=False)  # inside the arc of the cameras: nothing is guessed
     except Failed as failed:
         say(f"{scene.name}: FERMATA al passo «{failed}»")
         raise
@@ -217,7 +282,7 @@ def one(scene: Scene, args, results: Path) -> None:
             note.append(f"- Gaussiane della ripresa {metrics.get('gaussians')}, del set {metrics.get('scenery')}; "
                         f"opache {100 * metrics.get('opaque_share', 0):.0f}%, ad ago {100 * metrics.get('needle_share', 0):.0f}%")
         sizes = [f"{f.name} {f.stat().st_size / 1e6:.0f} MB" for f in sorted(show.glob("*")) if f.is_file()]
-        note += ["", "Da mostrare (in consegna/" + scene.name + "): " + (", ".join(sizes) or "niente"), ""]
+        note += ["", f"Da mostrare (in {ROOTS['show']}/{scene.name}): " + (", ".join(sizes) or "niente"), ""]
         (out / "NOTE.md").write_text("\n".join(note), encoding="utf-8")
 
 
@@ -231,19 +296,26 @@ def main() -> int:
     ap.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE", help="more training options, for every scene")
     args = ap.parse_args()
 
-    results = REPO / ("risultati_prova" if args.smoke else "risultati")
+    if args.smoke:  # its own folders: a check of this script must not touch the real scenes
+        ROOTS.update({key: name + "_prova" for key, name in ROOTS.items()})
+    results = REPO / ROOTS["results"]
     scenes = [s for s in SCENES if not args.only or s.name in args.only]
     if args.smoke:
-        scenes = [Scene(**{**s.__dict__, **SMOKE}) for s in scenes[:1]]
+        scenes = [Scene(**{**s.__dict__, **SMOKE, "cameras": min(s.cameras, 4), "high": min(s.high, 1)})
+                  for s in (scenes if args.only else scenes[:1])]
         args.devices = args.devices or "cpu"
         args.set = [*args.set, "views_per_step=2", "densify_start=10", "densify_every=10", "log_every=10"]
     gpu = environment(results, args.smoke)
     code = 0
+
+    def archive() -> str:
+        return shutil.make_archive(str(REPO / results.name), "zip", root_dir=REPO, base_dir=results.name)
+
     if not gpu and not args.smoke:
         code = 2
     else:
         for scene in scenes:
-            if (results / scene.name / "metrics.json").exists() and not args.redo:
+            if (results / scene.name / "metrics.json").exists() and not (args.redo or scene.always):
                 say(f"{scene.name}: già fatta (--redo per rifarla)")
                 continue
             try:
@@ -257,10 +329,10 @@ def main() -> int:
                 say(f"{scene.name}: errore inatteso, vedi {results / scene.name / 'errore.txt'}")
                 code = 1
                 break
-    archive = shutil.make_archive(str(REPO / results.name), "zip", root_dir=REPO, base_dir=results.name)
-    say(f"Da mandare: {archive}")
+            say(f"{scene.name}: fatta. {archive()} è aggiornato e si può già mandare")
+    say(f"Da mandare: {archive()}")
     if code == 0:
-        say(f"Da mostrare: la cartella {REPO / 'consegna'}")
+        say(f"Da mostrare: la cartella {REPO / ROOTS['show']}")
     return code
 
 

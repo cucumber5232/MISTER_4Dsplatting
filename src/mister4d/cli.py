@@ -127,7 +127,7 @@ def cmd_render(args):
 
     render_orbit(args.run, args.out, seconds=args.seconds, fps=args.fps, scale=args.scale,
                  fixed_camera=args.camera, take=args.take, speed=args.speed, transparent=args.transparent,
-                 width=args.width, height=args.height, path=args.path)
+                 width=args.width, height=args.height, path=args.path, margin=args.margin)
 
 
 def cmd_export(args):
@@ -280,6 +280,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--width", type=int, help="width in pixels (instead of --scale)")
     p.add_argument("--height", type=int, help="height in pixels (instead of --scale)")
     p.add_argument("--camera", help="stand where this camera of the rig stood instead of orbiting")
+    p.add_argument("--margin", type=float, default=10.0,
+                   help="cameras on an arc: degrees the orbit goes beyond its ends (negative = stays inside)")
     p.add_argument("--path", help="JSON file with the key views of a camera move (see the player: Copia la vista)")
     p.add_argument("--transparent", action="store_true",
                    help="transparent background: needs a .mov (ProRes 4444) or a folder of PNG images")

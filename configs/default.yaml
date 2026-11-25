@@ -24,6 +24,7 @@ max_gaussians: 2000000
 # images need win it back, the others fade and are removed. Higher values (0.015)
 # give fewer Gaussians and steadier in-between views, but softer filmed views.
 opacity_decay: 0.005
+opacity_decay_logit: false   # true: the decay hardly touches solid Gaussians (being measured)
 
 # Shape of the Gaussians. A needle (far longer in one direction than in the other
 # two) hides along the line of sight of one camera and shows as a streak from
@@ -48,3 +49,4 @@ learn_camera_colors: false
 full_scene: false
 scenery_iterations: -1       # -1 = 7000
 scenery_max_gaussians: 1500000
+scenery_opacity_decay: 0.0   # opacity_decay for the empty set: there it leaves the set see-through

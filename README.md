@@ -447,19 +447,49 @@ computer con le GPU: installa il programma se manca, crea le riprese della
 persona di prova sul set, ricostruisce la scena intera con un training lungo,
 misura il risultato e prepara player e video. Dura qualche ora.
 
-Fa tre scene, una dopo l'altra: una veloce che controlla soltanto che tutto
-funzioni su quel computer, poi 4 camere su un arco di 150° e 12 camere su un
-arco di 220°. Alla fine:
+Fa più scene, una dopo l'altra.
+
+- `prova_rapida` controlla soltanto che tutto funzioni su quel computer.
+  Dura pochi minuti e viene rifatta a ogni avvio.
+- `rig12_b`, `rig12_logit`, `rig12_fermo` e `rig12_solido` sono le stesse
+  riprese (12 camere su un arco di 220°, 1280×720) addestrate con opzioni
+  diverse.
+- `sala16` è la scena da mostrare: 12 camere sull'arco e 4 in alto,
+  1920×1080, con più passi di training. Usa le opzioni della prova che è
+  riuscita meglio sulle camere di verifica.
+- `rig4_b` ha 4 camere su un arco di 150°.
+
+Alla fine:
 
 - `consegna\` contiene, per ogni scena, `player.html` e `video.mp4`;
 - `risultati.zip` contiene misure, immagini di controllo e registri. È il
-  file da rimandare a chi sviluppa.
+  file da rimandare a chi sviluppa. Viene riscritto dopo ogni scena, quindi
+  si può mandare anche prima che tutto sia finito.
 
-Se si interrompe, riavviandolo riparte da dove era arrivato. Da terminale:
+Una scena già misurata viene saltata. Se si interrompe, riavviandolo riparte
+da dove era arrivato. Da terminale:
 
 ```bash
-python scripts/scena_di_prova.py --only rig4
+python scripts/scena_di_prova.py --only sala16
 ```
+
+Prima prova sulla workstation (due RTX 6000 Ada, 1280×720, 60 frame, scene
+`rig4` e `rig12`): circa 24 passi al secondo, 14 minuti per i 20 000 passi
+del set e 18 per i 25 000 della ripresa.
+
+| Scena | Verifica: PSNR / PSNR soggetto / SSIM | Training: PSNR / PSNR soggetto |
+|---|---|---|
+| `rig12`, 12 camere | 24,6 dB / 21,9 dB / 0,86 | 34,0 dB / 26,6 dB |
+| `rig4`, 4 camere | 16,7 dB / 14,4 dB / 0,67 | 30,4 dB / 26,5 dB |
+
+Con 12 camere la persona regge anche vista da camere mai usate. Con 4 camere
+no. In tutte e due il set era rovinato: semitrasparente, con il pavimento
+sfocato. La causa era il decadimento dell'opacità, che nel set agiva a ogni
+passo su tutte le Gaussiane e ne aveva tolte circa tre su quattro. Ora nel
+set è spento (`scenery_opacity_decay`) e nella ripresa tocca solo le
+Gaussiane che una camera ha disegnato in quel passo. In più, senza maschere
+la scena viene addestrata su un fondo di colore casuale, che la obbliga a
+essere piena. Le scene nuove servono a misurare l'effetto.
 
 ## Training sulle GPU
 

@@ -82,6 +82,63 @@ def test_plates_are_taken_from_the_take_when_the_empty_set_was_not_recorded(tiny
     assert changed.shape == (72, 96) and 0.0 < (changed > 127).mean() < 0.5
 
 
+def test_the_set_is_trained_without_decay_and_shared_by_takes_that_differ_in_their_own_options():
+    import dataclasses
+
+    from mister4d.trainer import TrainConfig, scenery_config
+
+    cameras = ["cam01", "cam02", "ver01"]
+    plain = TrainConfig(full_scene=True, holdout=["ver01", "ver09"], scenery_iterations=900)
+    own = scenery_config(plain, cameras)
+    assert plain.opacity_decay > 0 and own.opacity_decay == 0.0  # the take fades what is not needed, the set not
+    assert own.static and not own.full_scene and own.iterations == 900 and own.holdout == ["ver01"]
+    assert own.max_gaussians == plain.scenery_max_gaussians and own.max_scale == plain.scenery_max_scale
+    other = dataclasses.replace(plain, opacity_decay=0.0, opacity_decay_logit=True, lambda_opacity_entropy=0.005,
+                                lambda_ray_spread=0.1, init_opacity=0.3, iterations=123)
+    assert scenery_config(other, cameras) == own  # the same set: it is trained once
+    assert scenery_config(dataclasses.replace(plain, scenery_opacity_decay=0.002), cameras).opacity_decay == 0.002
+    assert scenery_config(dataclasses.replace(plain, lambda_needle=0.0), cameras) != own  # this shapes the set too
+
+
+def test_the_test_rig_can_have_cameras_that_look_down_on_the_subject():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "make_benchmark", Path(__file__).resolve().parents[1] / "scripts" / "make_benchmark.py")
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+    rig, train, verify = bench.bench_rig(160, 90, train=4, arc=150.0, high=2)
+    assert train == [f"cam{i:02d}" for i in range(1, 7)] and set(rig.cameras) == set(train) | set(verify)
+    low, _, _ = bench.bench_rig(160, 90, train=4, arc=150.0)
+    assert all(np.allclose(rig.cameras[n].t, low.cameras[n].t) for n in low.cameras)  # the others do not move
+    for name in train[4:]:
+        cam = rig.cameras[name]
+        eye = -cam.R.T @ cam.t
+        assert abs(eye[2] - 2.6) < 1e-6 and abs(np.hypot(eye[0], eye[1]) - bench.RADIUS) < 1e-6
+        uv, depth = cam.project(np.array([bench.TARGET, [0.0, 0.0, 0.05], [0.0, 0.0, 1.75]]))
+        assert (depth > 0).all() and np.allclose(uv[0], [cam.K[0][2], cam.K[1][2]], atol=1e-6)
+        assert (uv[:, 0] > 0).all() and (uv[:, 0] < 159).all() and (uv[:, 1] > 0).all() and (uv[:, 1] < 89).all()
+
+
+def test_the_orbit_of_the_video_can_stay_inside_the_arc_of_the_cameras():
+    from mister4d.render import orbit_path
+
+    center = np.array([0.0, 0.0, 1.0])
+    cams = []
+    for i, degrees in enumerate(np.linspace(-90.0, 90.0, 7)):
+        a = np.radians(degrees)
+        R, t = look_at(center + [3.0 * np.cos(a), 3.0 * np.sin(a), 0.4], center)
+        cams.append(Camera(f"cam{i}", 64, 48, [[60.0, 0, 31.5], [0, 60.0, 23.5], [0, 0, 1]], np.zeros(5), R, t))
+
+    def reach(margin):
+        eyes = np.array([-R.T @ t for R, t in orbit_path(cams, center, 200, margin)])
+        return np.degrees(np.arctan2(eyes[:, 1], eyes[:, 0]))
+
+    assert abs(reach(10.0).max() - 100.0) < 0.5 and abs(reach(10.0).min() + 100.0) < 0.5
+    assert abs(reach(-5.0).max() - 85.0) < 0.5 and abs(reach(-5.0).min() + 85.0) < 0.5
+
+
 @pytest.mark.slow
 def test_plane_sweeps_put_the_set_where_a_camera_that_gave_no_points_sees_it():
     from mister4d.human import StudioView

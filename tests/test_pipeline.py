@@ -245,6 +245,14 @@ def test_the_opacity_decay_removes_what_the_images_do_not_need(tiny_dataset, tmp
     assert log[-1]["psnr_holdout"] > log[0]["psnr_holdout"]  # ...that still describe the subject
     assert all(scene.state_at(f)["active"].numel() > 100 for f in range(5))
 
+    # Taken in logit space the same decay still removes what is not needed, and leaves solid what is.
+    train(tiny_dataset, tmp_path / "spare", TrainConfig(devices="cpu", opacity_decay=0.03, opacity_decay_logit=True,
+                                                        **options))
+    spare, _ = load_checkpoint(tmp_path / "spare" / "ckpt.pt")
+    solid = lambda s: float((torch.sigmoid(s.params["opacities"].detach()) > 0.5).float().mean())  # noqa: E731
+    assert spare.num_gaussians < plain.num_gaussians and solid(spare) > solid(scene)
+    assert _log(tmp_path / "spare")[-1]["psnr_holdout"] > log[0]["psnr_holdout"]
+
 
 @pytest.mark.slow
 def test_a_camera_that_sees_other_colours_is_compensated(tiny_dataset, tmp_path):

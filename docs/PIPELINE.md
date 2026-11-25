@@ -177,7 +177,13 @@ Ottimizzazione (`trainer.py`):
   alle immagini lo riprendono subito dal gradiente. Le altre si spengono e
   vengono eliminate dalla densificazione. Non agisce quando si rifinisce una
   scena già fatta (`lighten`). Le misure sono in
-  [Idee recenti](#idee-recenti);
+  [Idee recenti](#idee-recenti). Tolto così, il decadimento pesa di più
+  sulle Gaussiane piene: a opacità 0,9 vale quanto l'ottimizzatore può
+  restituire in un passo, e nella prima prova su GPU solo il 16% delle
+  Gaussiane visibili superava 0,5. Con `opacity_decay_logit` la stessa
+  quantità viene tolta nello spazio del logit: le Gaussiane deboli si
+  spengono come prima, quelle piene quasi non vengono toccate. È in prova,
+  spento di default;
 - forma delle Gaussiane: una penalità su quelle ad ago, cioè molto più lunghe
   in una direzione che nelle altre due (`lambda_needle`), e una dimensione
   minima pari a mezzo pixel delle immagini di training (`min_scale_pixels`).
@@ -263,11 +269,26 @@ resta fisso sotto tutti gli istanti (`scenery.py`, e `scenery` in `model.py`).
    maschere.
 4. Training del set come scena statica sulle immagini del set vuoto, in
    `run/scenery/`. Opzioni: `scenery_iterations` (default 7000),
-   `scenery_max_gaussians`, `scenery_max_scale`, `scenery_prune_scale`.
+   `scenery_max_gaussians`, `scenery_max_scale`, `scenery_prune_scale`,
+   `scenery_opacity_decay`. Il set viene addestrato senza decadimento
+   dell'opacità. In una ripresa una Gaussiana viene disegnata solo nei passi
+   che mostrano il suo istante. In una scena statica viene disegnata a ogni
+   passo, quindi lo stesso decadimento è molte volte più forte: pavimenti
+   e fondali restano semitrasparenti e perdono gran parte delle Gaussiane.
+   Due riprese che differiscono solo
+   nelle opzioni della ripresa usano lo stesso set, che non viene
+   riaddestrato.
 5. Training della ripresa sulle immagini intere. Le Gaussiane del set sono
    congelate e vengono disegnate insieme a quelle della ripresa, ma non
    vengono più ottimizzate né densificate. Quello che cambia rispetto al set,
    ombra del soggetto compresa, è descritto dalle Gaussiane della ripresa.
+
+Senza maschere ogni pixel mostra qualcosa. Per questo, nel set e nella
+ripresa, l'immagine disegnata viene posata su un colore che cambia a ogni
+passo prima di confrontarla con quella vera (`random_background`). Dove la
+scena lascia vedere attraverso il confronto dà un errore, e la scena diventa
+piena. Senza questo un set semitrasparente può compensare con colori più
+chiari, che tornano solo dalle camere di training.
 
 Una ripresa lunga ha un solo set per tutti gli spezzoni. Nei file per il
 player le Gaussiane del set stanno all'inizio di ogni blocco con durata 255
@@ -278,8 +299,17 @@ modifiche. In una ripresa a spezzoni il set viene ripetuto in ogni blocco.
 Prova su CPU (persona di prova, 4 camere, 240×135, 250 passi per fase): i
 punti di partenza del set, visti da tre camere di verifica, coprono dal 92 al
 99% dell'immagine con un errore mediano di 4–7 livelli su 255. Il set
-addestrato dà 22 dB sulle camere di verifica. Non è mai stato addestrato su
-GPU a piena risoluzione.
+addestrato dà 22 dB sulle camere di verifica.
+
+Prima prova su GPU (due RTX 6000 Ada, 1280×720, 60 frame, 12 camere su 220°,
+20 000 passi per il set e 25 000 per la ripresa, 33 minuti in tutto): 24,6 dB
+sulle camere di verifica, 21,9 dB sul soggetto. Il set partiva da circa
+400 000 punti ed è finito con 119 000 Gaussiane, semitrasparente (copertura
+attorno a 0,6 su parete e pavimento) e con il pavimento sfocato. Veniva
+ancora addestrato con il decadimento dell'opacità, e niente lo obbligava a
+essere pieno. Con 4 camere su 150° il soggetto dalle camere di verifica
+scende a 14,4 dB. Le
+misure dopo la correzione sono in [README](../README.md#scena-di-prova-sulla-workstation).
 
 #### Scene leggere: Gaussiane che durano più frame
 
@@ -299,7 +329,9 @@ di Gaussiane visibili per istante, quelle da memorizzare sono K volte meno.
   Scrive `eval/summary.md`, `metrics.json` e immagini verità | render | errore.
 - `render`: video del risultato. Di default una camera virtuale percorre
   l'arco coperto dal rig (giro completo solo se le camere circondano il
-  soggetto) mentre la ripresa va avanti e indietro; `--take` la riproduce una
+  soggetto) mentre la ripresa va avanti e indietro. Esce di 10° dalle
+  estremità dell'arco; `--margin` cambia quel valore, e se è negativo
+  l'orbita resta dentro l'arco. `--take` riproduce la ripresa una
   volta dall'inizio alla fine; `--camera` sta dove stava una camera del rig;
   `--path` segue le viste chiave di un file JSON (il player le copia con
   «Copia la vista»). Uscite: `.mp4` (H.264, per guardare), `.mov` (ProRes 422

@@ -42,11 +42,13 @@ FPS = 30.0
 
 
 def bench_rig(width: int, height: int, train: int = 4, arc: float = 150.0,
-              between: int | None = None) -> tuple[Rig, list[str], list[str]]:
+              between: int | None = None, high: int = 0) -> tuple[Rig, list[str], list[str]]:
     """Training cameras on an arc like the demo rig, verification cameras between and around them.
 
     ``between`` limits how many of the gaps between training cameras get a verification camera
-    (default: all of them); with many cameras a few, evenly spread, are enough.
+    (default: all of them); with many cameras a few, evenly spread, are enough. ``high`` adds that
+    many training cameras 2.6 m above the floor, looking down: without them nothing sees the
+    subject from above.
     """
     fy = height * RADIUS / VIEW_METRES
     scale = width / 960.0
@@ -68,6 +70,9 @@ def bench_rig(width: int, height: int, train: int = 4, arc: float = 150.0,
     names_train = [f"cam{i + 1:02d}" for i in range(train)]
     for i, name in enumerate(names_train):
         add(name, az[i], z=1.4 + (0.25 if i % 2 else -0.1), k=i)
+    for j in range(high):
+        names_train.append(f"cam{train + j + 1:02d}")
+        add(names_train[-1], -arc / 2 + arc * (j + 0.5) / high, z=2.6, k=train + j)
     verify = [(a + b) / 2 for a, b in zip(az[:-1], az[1:])]  # the middle of every gap
     if between is not None and between < len(verify):
         verify = [verify[i] for i in sorted(set(np.linspace(0, len(verify) - 1, max(between, 1)).round().astype(int)))]
@@ -115,9 +120,9 @@ def _render_camera(job) -> str:
 
 def make_dataset(out: Path, width: int, height: int, first: int, frames: int, train: int = 4,
                  arc: float = 150.0, noise: float = 1.5, seed: int = 0, points: int | None = None,
-                 full_scene: bool = False, between: int | None = None, jobs: int = 1) -> Path:
+                 full_scene: bool = False, between: int | None = None, jobs: int = 1, high: int = 0) -> Path:
     out = Path(out)
-    rig, names_train, names_verify = bench_rig(width, height, train, arc, between)
+    rig, names_train, names_verify = bench_rig(width, height, train, arc, between, high)
     ids = list(range(first, first + frames))
     t0 = time.time()
     (out / "background").mkdir(parents=True, exist_ok=True)
@@ -289,6 +294,7 @@ def main() -> None:
     p.add_argument("--verify-between", type=int, default=None,
                    help="verification cameras in the gaps between training cameras (default: one per gap)")
     p.add_argument("--jobs", type=int, default=1, help="cameras rendered at the same time, one process each")
+    p.add_argument("--high", type=int, default=0, help="more training cameras, 2.6 m above the floor")
     p = sub.add_parser("raw")
     p.add_argument("out")
     p.add_argument("--width", type=int, default=640)
@@ -307,7 +313,8 @@ def main() -> None:
     if args.what == "dataset":
         first = args.first if args.first is not None else fastest_window(args.frames)
         make_dataset(Path(args.out), args.width, args.height, first, args.frames, args.train_cameras, args.arc,
-                     args.noise, args.seed, args.points, args.full_scene, args.verify_between, args.jobs)
+                     args.noise, args.seed, args.points, args.full_scene, args.verify_between, args.jobs,
+                     args.high)
     elif args.what == "raw":
         check_raw(make_raw(Path(args.out), args.width, args.height, args.frames, args.cameras, args.seed))
     elif args.what == "sheets":

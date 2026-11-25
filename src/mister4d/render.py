@@ -122,7 +122,7 @@ def render_orbit(run_dir: str | Path, out_path: str | Path, seconds: float = 8.0
                  fixed_camera: str | None = None, device: str = "auto", log=print, *,
                  take: bool = False, speed: float = 1.0, transparent: bool = False,
                  width: int | None = None, height: int | None = None,
-                 path: str | Path | None = None) -> Path:
+                 path: str | Path | None = None, margin: float = 10.0) -> Path:
     """Render a video of a trained take.
 
     The camera orbits the subject, or stands where ``fixed_camera`` of the rig
@@ -130,6 +130,8 @@ def render_orbit(run_dir: str | Path, out_path: str | Path, seconds: float = 8.0
     back and forth for ``seconds``; with ``take`` it is played once, start to
     end (``speed`` 0.5 = half speed). The output is an ``.mp4``, a ProRes
     ``.mov``, or a folder of PNG images; the last two can be ``transparent``.
+    With cameras on an arc the orbit goes ``margin`` degrees beyond its ends
+    (negative: it stays that much inside, where the scene is seen best).
     """
     dev = pick_device(device)
     run = Run(run_dir, dev)
@@ -162,7 +164,7 @@ def render_orbit(run_dir: str | Path, out_path: str | Path, seconds: float = 8.0
     K = np.array([[ref.K[0, 0] * zoom, 0.0, ref.K[0, 2] * out_w / ref.width],
                   [0.0, ref.K[1, 1] * zoom, ref.K[1, 2] * zoom], [0.0, 0.0, 1.0]])
     center = np.array(meta["center"])
-    orbit = None if (fixed_camera or keys) else orbit_path(cams, center, total)
+    orbit = None if (fixed_camera or keys) else orbit_path(cams, center, total, margin)
     bg = torch.tensor(background, dtype=torch.float32, device=dev)
 
     out_path = Path(out_path)

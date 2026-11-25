@@ -58,6 +58,7 @@ class TrainConfig:
     scenery_iterations: int = -1  # steps for the empty set; -1 = 7000
     scenery_max_gaussians: int = 1_500_000
     scenery_max_scale: float = 1.0  # metres: floors and walls are made of large Gaussians
+    scenery_opacity_decay: float = 0.0  # the decay below, for the empty set: there it leaves it see-through
     scenery_prune_scale: float = 3.0
 
     # --- model --------------------------------------------------------------
@@ -113,6 +114,10 @@ class TrainConfig:
     opacity_reset_every: int = 0  # 0 = never (resets hurt with few cameras)
     opacity_decay: float = 0.005  # share of its opacity a Gaussian loses each time it is drawn (0 = off)
     opacity_decay_stop: float = 1.0  # the decay acts until this share of the iterations
+    # The share above pulls a solid Gaussian down much harder than a faint one: at opacity 0.9 it
+    # is as much as the optimiser can give back in a step, so nothing stays solid. With this the
+    # same amount is taken in logit space: faint Gaussians fade as before, solid ones hardly at all.
+    opacity_decay_logit: bool = False
     prune_to_end: bool = True  # keep removing faint Gaussians after densification stops, and at the end
     max_gaussians: int = 2_000_000
 
@@ -551,7 +556,11 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
             pred = rgb + (1.0 - alpha) * bg
             target = gt * mask + (1.0 - mask) * bg
         else:
-            pred, target = rgb, gt
+            # Without masks every pixel shows something. Over a colour that changes at every step
+            # a see-through scene is an error: it has to become solid, and cannot make up for
+            # what is missing with brighter colours that only look right from the training cameras.
+            pred = rgb + (1.0 - alpha) * torch.rand(3, device=dev) if cfg.random_background else rgb
+            target = gt
         l1 = (pred - target).abs().mean()
         loss = (1.0 - cfg.lambda_dssim) * l1 + cfg.lambda_dssim * (1.0 - ssim(pred, target))
         if mask is not None and cfg.lambda_mask > 0:
@@ -620,10 +629,18 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                 # and are pruned. (Not when refining a finished scene: there nothing prunes.)
                 with torch.no_grad():
                     opacity = scene.params["opacities"]
-                    drawn = [a.to(master) for r in results for _, a in r[2] if a is not None]
-                    seen = torch.cat(drawn).unique() if drawn else torch.arange(opacity.shape[0], device=master)
-                    faded = torch.sigmoid(opacity[seen]) * (1.0 - cfg.opacity_decay)
-                    opacity[seen] = torch.logit(faded.clamp(1e-6, 1.0 - 1e-6))
+                    seen = []
+                    for result in results:
+                        for info, active in result[2]:
+                            radii = info["radii"][:, :info["count"]] if "count" in info else info["radii"]
+                            shown = (radii > 0).all(dim=-1).any(dim=0)  # in the picture of at least one camera
+                            seen.append((torch.nonzero(shown).squeeze(-1) if active is None else active[shown]).to(master))
+                    seen = torch.cat(seen).unique()
+                    if cfg.opacity_decay_logit:
+                        opacity[seen] -= cfg.opacity_decay
+                    else:
+                        faded = torch.sigmoid(opacity[seen]) * (1.0 - cfg.opacity_decay)
+                        opacity[seen] = torch.logit(faded.clamp(1e-6, 1.0 - 1e-6))
 
             if strategy_state is not None:
                 info = _merge_info([pair for r in results for pair in r[2]], scene.num_gaussians, master)
@@ -700,6 +717,28 @@ def _fingerprint(data_dir: Path) -> str:
     return hashlib.sha1("|".join(parts).encode()).hexdigest()
 
 
+def scenery_config(cfg: TrainConfig, cameras: list[str]) -> TrainConfig:
+    """The options the empty set is trained with, from those of a take.
+
+    The opacity decay has its own value, off by default. In a take a Gaussian is drawn in the few
+    steps that show its instant; in a static scene it is drawn at every step, so the same decay
+    is many times stronger: floors and backdrops stay see-through and lose most of their
+    Gaussians. What only concerns the take goes back to its default: two takes that differ in
+    that share one set.
+    """
+    plain = TrainConfig()
+    return dataclasses.replace(
+        cfg, full_scene=False, static=True, static_frame=0, iterations=cfg.scenery_iterations,
+        max_gaussians=cfg.scenery_max_gaussians, max_scale=cfg.scenery_max_scale,
+        prune_scale=cfg.scenery_prune_scale, holdout=[c for c in cfg.holdout if c in cameras],
+        learn_time_offsets=False, learn_camera_colors=False, opacity_decay=cfg.scenery_opacity_decay,
+        opacity_decay_stop=plain.opacity_decay_stop, opacity_decay_logit=plain.opacity_decay_logit,
+        lambda_opacity_entropy=plain.lambda_opacity_entropy, lambda_ray_spread=plain.lambda_ray_spread,
+        lambda_flat=plain.lambda_flat, init_flatten=plain.init_flatten, init_opacity=plain.init_opacity,
+        init_duration=plain.init_duration, lambda_velocity=plain.lambda_velocity,
+        segment_frames=plain.segment_frames, segment_overlap=plain.segment_overlap)
+
+
 def _train_scenery(data_dir: Path, out_dir: Path, cfg: TrainConfig, resume: bool) -> Path:
     """Reconstruct the empty set as a static scene in ``out_dir/scenery``; returns its checkpoint."""
     source = data_dir / "scenery"
@@ -707,12 +746,7 @@ def _train_scenery(data_dir: Path, out_dir: Path, cfg: TrainConfig, resume: bool
         raise FileNotFoundError(f"no {source}: run 'mister4d init {data_dir} --full-scene' first")
     target = out_dir / "scenery"
     target.mkdir(parents=True, exist_ok=True)
-    cameras = read_meta(source)["cameras"]
-    own = dataclasses.replace(
-        cfg, full_scene=False, static=True, static_frame=0, iterations=cfg.scenery_iterations,
-        max_gaussians=cfg.scenery_max_gaussians, max_scale=cfg.scenery_max_scale,
-        prune_scale=cfg.scenery_prune_scale, holdout=[c for c in cfg.holdout if c in cameras],
-        learn_time_offsets=False, learn_camera_colors=False)
+    own = scenery_config(cfg, read_meta(source)["cameras"])
     tag = json.loads(json.dumps({
         "fingerprint": _fingerprint(source),
         "config": {k: v for k, v in dataclasses.asdict(own).items() if k not in _NOT_IN_RESULT}}))
