@@ -20,6 +20,13 @@ sh_degree: 0
 
 max_gaussians: 2000000
 
+# Key frames (0 = off, being measured): every this many frames all the starting points, each
+# living as long as its speed allows (at most init_longest_life seconds); from the frames in
+# between only what moves fast, with a short life. Fewer Gaussians on what is still, as many
+# as needed on hands and feet. Needs 'mister4d init' without --frame-step.
+init_keyframes: 0
+init_longest_life: 0.25
+
 # Every Gaussian loses this share of its opacity each time it is drawn: those the
 # images need win it back, the others fade and are removed. Higher values (0.015)
 # give fewer Gaussians and steadier in-between views, but softer filmed views.

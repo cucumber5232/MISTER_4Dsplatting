@@ -34,8 +34,8 @@ import yaml
 from .camera import describe_coverage, silhouette_coverage
 from .dataset import MultiViewDataset, read_meta, read_points_ply
 from .losses import needle_penalty, psnr, scale_regularizer, ssim
-from .model import (DynamicScene, estimate_velocities, init_gaussian_params, load_checkpoint, render_scene,
-                    save_checkpoint, scenery_of)
+from .model import (DynamicScene, estimate_velocities, init_gaussian_params, keyframe_points, load_checkpoint,
+                    render_scene, save_checkpoint, scenery_of)
 from .rasterizer import resolve_backend
 from .run import MANIFEST, SEGMENT_FRAMES, plan_segments, segment_dir, write_manifest
 
@@ -67,6 +67,11 @@ class TrainConfig:
     sh_degree: int = 0  # 0 = view-independent colour (safest with few cameras)
     sh_interval: int = 1000  # steps between SH degree increases
     init_duration: float = 1.0  # initial life of a Gaussian, in units of the init frame spacing
+    # Key frames every this many frames (0 = off): all the points of a key frame, with a life that
+    # depends on how fast they move, and from the frames in between only the fast points. Needs
+    # starting points at every frame ('mister4d init' without --frame-step).
+    init_keyframes: int = 0
+    init_longest_life: float = 0.25  # seconds: the longest life a key frame point starts with
     init_velocities: bool = True  # start from the motion estimated between the init point clouds
     init_flatten: float = 1.0  # < 1: start from discs lying on the visual hull, this much thinner across it
     learn_time_offsets: bool = False  # cameras not exposed together: learn their sub-frame offsets
@@ -343,39 +348,6 @@ def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=
     return {"psnr": float(np.mean(values))}
 
 
-@torch.no_grad()
-def lonely_in_the_room(means: torch.Tensor, viewmats: torch.Tensor, Ks: torch.Tensor, width: int, height: int,
-                       envelope: dict, margin: float = 0.3, border: float = 0.05, views: int = 2) -> torch.Tensor:
-    """Gaussians of a set that hang in its room where fewer than ``views`` cameras see them.
-
-    ``envelope`` is that of ``scenery.envelope_of``: the floor of the set and how far it reaches.
-    On the envelope a Gaussian is where the walls and the floor are, and hides nothing. In the
-    room, more than ``margin`` inside it, a Gaussian that one camera alone sees (or none: the
-    ``border`` of an image does not count) is held in place by nothing. The images are the same
-    wherever it is along the ray, so the training leaves it where it started, in front of the
-    views between the cameras.
-    """
-    seen = torch.zeros(means.shape[0], dtype=torch.int32, device=means.device)
-    for viewmat, K in zip(viewmats, Ks):
-        cam = means @ viewmat[:3, :3].T + viewmat[:3, 3]
-        z = cam[:, 2].clamp(min=1e-6)
-        u = K[0, 0] * cam[:, 0] / z + K[0, 2]
-        v = K[1, 1] * cam[:, 1] / z + K[1, 2]
-        seen += ((cam[:, 2] > 0.05) & (u > border * width) & (u < (1.0 - border) * width - 1)
-                 & (v > border * height) & (v < (1.0 - border) * height - 1)).int()
-    reach = torch.tensor(envelope["reach"], dtype=means.dtype, device=means.device)
-    rel = means[:, :2] - torch.tensor(envelope["center"], dtype=means.dtype, device=means.device)
-    at = (torch.atan2(rel[:, 1], rel[:, 0]) + math.pi) / (2 * math.pi) * len(reach) - 0.5
-    lo = torch.floor(at)
-    frac = at - lo
-    lo = lo.long()
-    limit = reach[lo % len(reach)] * (1.0 - frac) + reach[(lo + 1) % len(reach)] * frac
-    inside = torch.linalg.norm(rel, dim=-1) < limit - margin
-    if envelope.get("floor") is not None:
-        inside &= means[:, 2] > envelope["floor"] + margin
-    return inside & (seen < views)
-
-
 def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                   window: tuple[int, int] | None = None, core: tuple[int, int] | None = None,
                   fixed_offsets: dict | None = None, start: dict | None = None,
@@ -429,10 +401,21 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
     else:
         xyz, rgb, frames, frame_step = _initial_points(ds, cfg, static_frame, window)
         velocities = estimate_velocities(xyz, frames) if cfg.init_velocities and not static else None
+        life = cfg.init_duration * frame_step
+        if cfg.init_keyframes > 1 and not static and frame_step == 1:
+            if velocities is None:
+                velocities = np.zeros_like(xyz)
+            keep, life = keyframe_points(xyz, frames, velocities, cfg.init_keyframes,
+                                         cfg.init_longest_life * ds.fps)
+            print(f"[train] key frames every {cfg.init_keyframes}: {int(keep.sum())} of {len(xyz)} starting "
+                  f"points kept, {int((keep & (life < 0.5 * cfg.init_keyframes)).sum())} of them fast, "
+                  f"median life {float(np.median(life[keep])):.1f} frames", flush=True)
+            xyz, rgb, frames, velocities, life = xyz[keep], rgb[keep], frames[keep], velocities[keep], life[keep]
+        elif cfg.init_keyframes > 1 and not static:
+            print("[train] WARNING: init_keyframes needs starting points at every frame: ignored", flush=True)
         # On a scenery a faint subject lets the set show through it: there it starts solid.
         opacity = max(cfg.init_opacity, 0.5) if scenery is not None else cfg.init_opacity
-        params = init_gaussian_params(xyz, rgb, frames, cfg.sh_degree, opacity,
-                                      cfg.init_duration * frame_step, velocities, cfg.init_flatten)
+        params = init_gaussian_params(xyz, rgb, frames, cfg.sh_degree, opacity, life, velocities, cfg.init_flatten)
     scene = DynamicScene(params, cfg.sh_degree, static, *(scenery or (None, 0))).to(master)
     # With the set in the scene the images are compared whole: no mask enters the training.
     masked = ds.has_masks and not cfg.full_scene and scenery is None
@@ -489,11 +472,13 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
             return {}
         return {c: float(v) for c, v in zip(train_cams, (offsets.detach() * offset_free).cpu())}
 
-    # An empty set comes with its envelope (scenery.prepare_scenery): what hangs in the room
-    # where fewer than two cameras see it is removed as the training goes.
-    envelope = ds.meta.get("envelope") if static and not masked else None
-    if envelope is not None:
-        guard_views, guard_Ks = ds.camera_tensors(train_cams, master)
+    # An empty set comes with what may stand between its cameras (scenery.prepare_scenery):
+    # anything else the training puts there is removed as it goes.
+    guard = None
+    if static and not masked and "envelope" in ds.meta:
+        from .scenery import RigGuard
+
+        guard = RigGuard.load(Path(data_dir), ds.meta["envelope"])
 
     # Densification: gsplat's default strategy (clone / split / prune). Two
     # instances share one state so that growth can be switched off at the cap.
@@ -691,11 +676,10 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                         too_big = torch.exp(scene.params["scales"]).max(dim=-1).values > cfg.prune_scale
                     if 0 < int(too_big.sum()) < scene.num_gaussians:
                         remove(scene.params, optimizers, strategy_state, too_big)
-                if envelope is not None and (step % cfg.densify_every == 0 or step == iterations - 1):
-                    lonely = lonely_in_the_room(scene.params["means"].detach(), guard_views, guard_Ks,
-                                                ds.width, ds.height, envelope)
-                    if 0 < int(lonely.sum()) < scene.num_gaussians:
-                        remove(scene.params, optimizers, strategy_state, lonely)
+                if guard is not None and (step % cfg.densify_every == 0 or step == iterations - 1):
+                    stray = torch.from_numpy(guard.stray(scene.params["means"].detach().cpu().numpy()))
+                    if 0 < int(stray.sum()) < scene.num_gaussians:
+                        remove(scene.params, optimizers, strategy_state, stray.to(master))
                 if (cfg.opacity_reset_every > 0 and step > 0 and step % cfg.opacity_reset_every == 0
                         and step < active.refine_stop_iter):
                     reset_opa(scene.params, optimizers, strategy_state, value=cfg.prune_opacity * 2.0)
@@ -779,7 +763,8 @@ def scenery_config(cfg: TrainConfig, cameras: list[str]) -> TrainConfig:
         opacity_decay_stop=plain.opacity_decay_stop, opacity_decay_logit=plain.opacity_decay_logit,
         lambda_opacity_entropy=plain.lambda_opacity_entropy, lambda_ray_spread=plain.lambda_ray_spread,
         lambda_flat=plain.lambda_flat, init_flatten=plain.init_flatten, init_opacity=plain.init_opacity,
-        init_duration=plain.init_duration, lambda_velocity=plain.lambda_velocity,
+        init_duration=plain.init_duration, init_keyframes=plain.init_keyframes,
+        init_longest_life=plain.init_longest_life, lambda_velocity=plain.lambda_velocity,
         segment_frames=plain.segment_frames, segment_overlap=plain.segment_overlap)
 
 

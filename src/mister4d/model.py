@@ -79,6 +79,39 @@ def estimate_velocities(xyz: np.ndarray, frames: np.ndarray, smooth: int = 8) ->
     return velocities.astype(np.float32)
 
 
+def keyframe_points(xyz: np.ndarray, frames: np.ndarray, velocities: np.ndarray, every: int,
+                    longest: float) -> tuple[np.ndarray, np.ndarray]:
+    """Which starting points to keep, and how long each lives: key frames, with lives from speed.
+
+    Points of every frame come in; out go all the points of one frame every ``every`` (and of the
+    last one), and, from the frames in between, only the points that move too fast for the key
+    frames to cover them. A Gaussian with velocity v follows its surface for about 3 point
+    spacings before the error shows, so it lives (the sigma of its bell, in frames) 1.5 spacings
+    divided by its speed: at least half the gap between key frames, at most ``longest`` frames.
+    A still surface is described by few long-lived Gaussians, a hand that flies by a new set at
+    every frame, each living only as long as it is right.
+
+    Returns the mask of the points to keep and the life of every point (frames).
+    """
+    from scipy.spatial import cKDTree
+
+    xyz = np.asarray(xyz, dtype=np.float64)
+    frames = np.asarray(frames)
+    every = max(int(every), 1)
+    speed = np.linalg.norm(np.asarray(velocities, dtype=np.float64), axis=1)
+    spacing = np.full(len(xyz), 0.01)
+    for f in np.unique(frames):
+        sel = np.nonzero(frames == f)[0]
+        if len(sel) > 1:
+            spacing[sel] = cKDTree(xyz[sel]).query(xyz[sel], k=2)[0][:, 1]
+    reach = 1.5 * spacing / np.maximum(speed, 1e-9)  # frames a Gaussian stays right
+    first, last = int(frames.min()), int(frames.max())
+    key = ((frames - first) % every == 0) | (frames == last)
+    life = np.where(key, np.clip(reach, 0.5 * every, longest), np.clip(reach, MIN_DURATION, 0.5 * every))
+    keep = key | (reach < 0.5 * every)
+    return keep, life.astype(np.float32)
+
+
 def _rotmat_to_quat(R: Tensor) -> Tensor:
     """Rotation matrices [N,3,3] to quaternions wxyz [N,4]."""
     m00, m11, m22 = R[:, 0, 0], R[:, 1, 1], R[:, 2, 2]
@@ -113,12 +146,13 @@ def _rotmat_to_quat(R: Tensor) -> Tensor:
 
 
 def init_gaussian_params(xyz: np.ndarray, rgb: np.ndarray, frames: np.ndarray, sh_degree: int,
-                         init_opacity: float = 0.1, init_duration: float = 1.0,
+                         init_opacity: float = 0.1, init_duration: float | np.ndarray = 1.0,
                          velocities: np.ndarray | None = None, flatten: float = 1.0) -> nn.ParameterDict:
     """Gaussians sized by the distance to their neighbours of the same frame.
 
     Isotropic by default. With ``flatten`` < 1 they start as discs lying on the
     surface the points describe: that much thinner across it than along it.
+    ``init_duration`` is one life for all (frames) or one per point.
     """
     from scipy.spatial import cKDTree
 
@@ -162,7 +196,8 @@ def init_gaussian_params(xyz: np.ndarray, rgb: np.ndarray, frames: np.ndarray, s
             "sh0": nn.Parameter(rgb_to_sh0(torch.from_numpy(np.asarray(rgb, dtype=np.float32)))[:, None, :]),
             "shN": nn.Parameter(torch.zeros(n, num_sh_bases(sh_degree) - 1, 3)),
             "times": nn.Parameter(torch.from_numpy(frames.copy())),
-            "durations": nn.Parameter(torch.full((n,), math.log(init_duration))),
+            "durations": nn.Parameter(torch.from_numpy(np.log(np.broadcast_to(
+                np.asarray(init_duration, dtype=np.float32), (n,))).copy())),
             "velocities": nn.Parameter(torch.zeros(n, 3) if velocities is None
                                        else torch.from_numpy(np.asarray(velocities, dtype=np.float32))),
         }

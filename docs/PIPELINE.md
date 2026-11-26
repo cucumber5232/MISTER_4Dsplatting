@@ -273,11 +273,24 @@ resta fisso sotto tutti gli istanti (`scenery.py`, e `scenery` in `model.py`).
    davanti alle viste tra una camera e l'altra, perché nessuna immagine lo
    contraddice.
 
-   Per la stessa ragione un punto che sta nella stanza, a più di 30 cm dal
-   contorno, e che meno di due camere vedono, viene tolto. Il training del
-   set ripete questo controllo a ogni passo di densificazione
-   (`lonely_in_the_room` in `trainer.py`), usando il contorno salvato in
-   `scenery/meta.json`.
+   Tra le camere e il soggetto, in un set vuoto, c'è solo quello che sta
+   davvero nella stanza, e un oggetto vero ha una trama che almeno tre
+   camere trovano alla stessa profondità. Dentro l'anello delle camere
+   (più vicino al centro della camera più lontana e del contorno, a più di
+   30 cm dal pavimento, fino a un metro sopra la camera più alta) resta
+   quindi solo quello che sta entro 10 cm da un punto su cui tre camere
+   concordano. Tutto il resto viene tolto, dai punti di partenza e poi a
+   ogni passo di densificazione del training del set (`RigGuard` in
+   `scenery.py`, dati in `scenery/rig_support.npz`). Una macchia grigia a
+   mezz'aria davanti a una parete uniforme torna bene da tutte le camere di
+   training, e vista da una camera in mezzo a loro è un velo sul soggetto.
+   Fuori dall'anello non si toglie niente: lì una macchia alla profondità
+   sbagliata non copre niente.
+
+   Una versione precedente toglieva invece, in tutta la stanza, i punti visti
+   da meno di due camere. Il velo restava, perché due camere lo vedono, e
+   sparivano pezzi di parete ai bordi dell'arco: dalla camera di verifica
+   oltre l'ultima camera l'immagine era coperta solo al 76%.
 3. Punti di partenza di ciò che si muove: il visual hull, calcolato su tutto
    ciò che differisce dal set vuoto, ombre comprese (`change/`). Queste
    sagome servono solo a mettere le prime Gaussiane. Il training non usa
@@ -567,19 +580,28 @@ Preso da lì come idea:
   i cui pesi non hanno una licenza chiara per l'uso commerciale. Qui si usa
   la scansione a piani, che non richiede modelli.
 
-Da prendere, in ordine:
+Preso, riscritto qui: i fotogrammi chiave con la vita in base alla velocità
+(`init_keyframes`, `keyframe_points` in `model.py`). Dai punti di partenza di
+ogni frame si tengono tutti quelli di un frame ogni K (e dell'ultimo), e dai
+frame in mezzo solo quelli che si muovono troppo in fretta perché i
+fotogrammi chiave li coprano. Una Gaussiana con la sua velocità segue la
+superficie per circa tre distanze tra punti, quindi vive 1,5 distanze divise
+per la velocità: almeno metà dell'intervallo tra fotogrammi chiave e al più
+`init_longest_life` secondi (0,25). Prova su CPU (persona di prova, 4 camere,
+240×135, 15 frame, 600 passi, K = 3): dalle camere di verifica 28,4 dB in
+tutti e due i casi, 21,5 dB sul soggetto, sfarfallio 9,4 invece di 9,7, con
+10 191 Gaussiane invece di 34 016. Per ora è spento di default: la scena
+`rig12_k` della scena di prova lo misura su GPU.
 
-1. la durata iniziale di una Gaussiana in base alla velocità: le parti lente
-   nascono con una vita lunga e vengono seminate ogni pochi frame, le parti
-   veloci a ogni frame. È il rimedio diretto alle Gaussiane che vivono un
-   frame solo;
-2. il riposizionamento delle Gaussiane poco opache al posto della
+Ancora da prendere, in ordine:
+
+1. il riposizionamento delle Gaussiane poco opache al posto della
    densificazione, con un numero fisso di Gaussiane. gsplat ne ha già i
    mattoni, con licenza Apache-2.0;
-3. il moto rigido continuo (rotazione e traslazione, con una curva di Bézier)
+2. il moto rigido continuo (rotazione e traslazione, con una curva di Bézier)
    dell'articolo TRiGS, per Gaussiane che seguono un arto per molti frame.
    Richiede di cambiare il formato del player e il lettore Unity;
-4. la sincronizzazione sotto il frame e la stima del rolling shutter dalle
+3. la sincronizzazione sotto il frame e la stima del rolling shutter dalle
    immagini, per camere senza genlock.
 
 La guida di Open4DGS segnala come problema aperto che i soggetti ricostruiti

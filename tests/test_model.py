@@ -93,3 +93,26 @@ def test_time_is_differentiable_so_a_camera_offset_can_be_learned():
     when.grad = None
     state["opacities"].sum().backward()
     assert float(when.grad) < 0  # and, past its instant, makes it fade
+
+
+def test_key_frames_keep_still_points_long_and_fast_points_short():
+    from mister4d.model import keyframe_points
+
+    rng = np.random.default_rng(0)
+    xyz, frames, velocities = [], [], []
+    for f in range(10):
+        still = rng.random((200, 3)) * [1.0, 1.0, 0.0]  # a floor, 7 cm between points
+        hand = rng.random((200, 3)) * [0.2, 0.2, 0.0] + [0.0, 0.0, 1.0]  # 1.4 cm between points
+        xyz += [still, hand]
+        frames += [np.full(200, f), np.full(200, f)]
+        velocities += [np.zeros((200, 3)), np.tile([0.1, 0.0, 0.0], (200, 1))]  # 10 cm a frame
+    xyz, frames, velocities = np.concatenate(xyz), np.concatenate(frames), np.concatenate(velocities)
+    keep, life = keyframe_points(xyz, frames, velocities, every=4, longest=7.5)
+    floor = xyz[:, 2] < 0.5
+    key = np.isin(frames, [0, 4, 8, 9])  # every 4 frames, and the last one
+    assert keep[floor & key].all() and not keep[floor & ~key].any()  # what is still: key frames only
+    assert keep[~floor].all()  # what is fast: every frame
+    assert np.allclose(life[floor & key], 7.5)  # still: as long as allowed
+    assert (life[~floor & key] == 2.0).all()  # fast, on a key frame: half the gap to the next one
+    between = life[~floor & ~key]  # fast, in between: about as long as each stays right, never below the shortest
+    assert (between >= 0.35 - 1e-6).all() and (between < 2.0).all() and np.median(between) < 0.5

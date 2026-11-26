@@ -14,8 +14,8 @@ from mister4d.dataset import MultiViewDataset, read_meta, read_points_ply
 from mister4d.evaluate import evaluate_run
 from mister4d.export import ALWAYS, export_web, pack_chunk
 from mister4d.model import DynamicScene, init_gaussian_params, load_checkpoint, render_scene, scenery_of
-from mister4d.scenery import (_on_envelope, change_masks, envelope_of, estimate_plates, inside_envelope,
-                              sweep_points, views_of)
+from mister4d.scenery import (RigGuard, _on_envelope, change_masks, envelope_of, estimate_plates, in_the_rig,
+                              inside_envelope, sweep_points)
 
 quiet = lambda *_: None  # noqa: E731
 
@@ -139,7 +139,7 @@ def test_the_envelope_of_a_set_is_its_floor_and_its_walls_also_where_no_point_sh
     stray = np.stack([r * np.cos(a), r * np.sin(a), rng.uniform(0.0, 3.0, 60)], axis=1)
     in_front = np.array([[2.6, 0.2 * k, 1.0] for k in range(-3, 4)])  # a few wrong points in mid air
     env = envelope_of(np.concatenate([points, stray, in_front]), np.zeros(3), cameras)
-    assert abs(env["floor"]) < 0.02
+    assert abs(env["floor"]) < 0.02 and env["ring"] == pytest.approx(2.0) and env["top"] == pytest.approx(2.4)
     assert min(env["reach"]) > 4.8 and max(env["reach"]) < 5.3  # neither the stray points nor the gap move it
 
     # A ray is carried to where it leaves the set: at the floor, or at the wall.
@@ -161,28 +161,26 @@ def test_the_envelope_of_a_set_is_its_floor_and_its_walls_also_where_no_point_sh
     assert envelope_of(np.zeros((0, 3)), np.zeros(3), cameras)["reach"][0] == pytest.approx(4.0)
 
 
-def test_what_hangs_in_the_room_where_one_camera_alone_sees_it_is_told_apart():
-    from mister4d.trainer import lonely_in_the_room
-
-    center = np.array([0.0, 0.0, 1.0])
-    cams = {}
-    for i, degrees in enumerate((-100.0, -30.0, 30.0, 100.0)):
-        a = np.radians(degrees)
-        R, t = look_at(center + [3.0 * np.cos(a), 3.0 * np.sin(a), 0.4], center)
-        cams[f"cam{i}"] = Camera(f"cam{i}", 64, 48, [[60.0, 0, 31.5], [0, 60.0, 23.5], [0, 0, 1]], np.zeros(5), R, t)
-    rig = Rig(cams)
-    env = {"center": [0.0, 0.0], "floor": 0.0, "reach": [6.0] * 72}
-    points = np.array([[0.0, 0.0, 1.0],   # where the subject stands: every camera sees it
-                       [3.2, 0.0, 1.4],   # between two cameras, beside both: nobody looks there
-                       [3.2, 0.0, 0.1],   # the same place, on the floor
-                       [5.9, 0.0, 1.4]])  # behind the cameras, on the wall
-    seen = views_of(rig, list(cams), points)
-    assert seen[0] == 4 and seen[1] < 2 and seen[3] < 2
-    viewmats = torch.tensor(np.stack([c.world_to_cam() for c in cams.values()]), dtype=torch.float32)
-    Ks = torch.tensor(np.stack([c.K for c in cams.values()]), dtype=torch.float32)
-    lonely = lonely_in_the_room(torch.tensor(points, dtype=torch.float32), viewmats, Ks, 64, 48, env)
-    assert lonely.tolist() == [False, True, False, False]  # only what is in mid air and unseen
-    assert (lonely.numpy() == (inside_envelope(env, points, 0.3) & (seen < 2))).all()  # as when the points are made
+def test_between_the_cameras_an_empty_set_keeps_only_what_three_cameras_agree_on(tmp_path):
+    env = {"center": [0.0, 0.0], "floor": 0.0, "reach": [6.0] * 72, "ring": 3.0, "top": 3.4}
+    lamp = np.array([[1.0, 1.0, 1.0 + 0.02 * k] for k in range(20)])  # a pole the cameras agree on
+    guard = RigGuard(env, lamp)
+    points = np.array([[0.0, 0.0, 1.0],    # where the subject stands: nothing there
+                       [2.0, 0.0, 1.5],    # in front of a camera: a veil
+                       [1.05, 1.0, 1.2],   # on the pole
+                       [0.0, 0.0, 0.1],    # the floor
+                       [5.9, 0.0, 1.4],    # the wall, behind the cameras
+                       [4.5, 0.0, 1.4],    # beyond the ring: hides nothing the cameras look at
+                       [0.0, 0.0, 4.0]])   # high above the rig
+    assert in_the_rig(env, points).tolist() == [True, True, True, False, False, False, False]
+    assert guard.stray(points).tolist() == [True, True, False, False, False, False, False]
+    # A wall nearer than the ring (the subject in front of a backdrop): the backdrop is kept.
+    near = {**env, "reach": [2.0] * 72}
+    assert not in_the_rig(near, np.array([[1.95, 0.0, 1.0]]))[0] and in_the_rig(near, np.array([[1.5, 0.0, 1.0]]))[0]
+    guard.save(tmp_path)
+    again = RigGuard.load(tmp_path, env)
+    assert (again.stray(points) == guard.stray(points)).all()
+    assert RigGuard.load(tmp_path / "nothing", env).stray(points).tolist() == [True, True, True] + [False] * 4
 
 
 def test_the_orbit_of_the_video_can_stay_inside_the_arc_of_the_cameras():

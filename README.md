@@ -452,9 +452,10 @@ Fa più scene, una dopo l'altra.
 
 - `prova_rapida` controlla soltanto che tutto funzioni su quel computer.
   Dura pochi minuti e viene rifatta a ogni avvio.
-- `sala16_b` è la scena da mostrare: 12 camere su un arco di 220° e 4 in
-  alto, 1920×1080.
-- `rig12_c` ha le sole 12 camere sull'arco, a 1280×720.
+- `rig12_d` ha 12 camere su un arco di 220°, a 1280×720.
+- `rig12_k` è come `rig12_d`, con i fotogrammi chiave (`init_keyframes=3`).
+- `sala16_c` è la scena da mostrare: 12 camere sull'arco e 4 in alto,
+  1920×1080.
 
 Alla fine:
 
@@ -468,7 +469,7 @@ dello script non vengono rifatte, e le loro misure restano in `risultati\`.
 Se si interrompe, riavviandolo riparte da dove era arrivato. Da terminale:
 
 ```bash
-python scripts/scena_di_prova.py --only sala16_b
+python scripts/scena_di_prova.py --only sala16_c
 ```
 
 ### Misure sulla workstation
@@ -502,9 +503,10 @@ Che cosa è stato corretto dopo ogni prova:
    fondo di colore casuale che la obbliga a essere piena.
 2. Dopo la seconda restava il velo. La causa più probabile sono i punti di
    partenza del set messi a mezz'aria dove le camere non concordano sulla
-   profondità. Ora quei punti vanno sul contorno del set, e quello che resta
-   a mezz'aria dove meno di due camere guardano viene tolto. La descrizione
-   è in [PIPELINE.md](docs/PIPELINE.md#scena-intera-il-set-e-la-ripresa).
+   profondità. Ora quei punti vanno sul contorno del set, e tra le camere e
+   il soggetto resta solo quello su cui almeno tre camere concordano. La
+   descrizione è in
+   [PIPELINE.md](docs/PIPELINE.md#scena-intera-il-set-e-la-ripresa).
    La prossima prova misura anche il set da solo contro lo studio vero
    (`make_benchmark.py set`), per vedere se il velo è sparito.
 

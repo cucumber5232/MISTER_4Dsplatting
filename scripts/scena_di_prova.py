@@ -65,10 +65,12 @@ class Scene:
 SCENES = [
     Scene("prova_rapida", "controllo veloce: tutta la catena in piccolo", 4, 150.0, 480, 270, 8, 1500, 1500,
           high=1, always=True),
-    Scene("sala16_b", "la scena da mostrare: 12 camere su 220 gradi e 4 in alto, 1920x1080", 12, 220.0, 1920, 1080,
-          60, 20000, 30000, between=3, high=4, takes="sala16"),
-    Scene("rig12_c", "12 camere su 220 gradi, 1280x720: le riprese di rig12 con il set nuovo", 12, 220.0, 1280, 720,
-          60, 20000, 25000, between=3, takes="rig12"),
+    Scene("rig12_d", "12 camere su 220 gradi, 1280x720: tra le camere resta solo cio' su cui tre concordano", 12,
+          220.0, 1280, 720, 60, 20000, 25000, between=3, takes="rig12"),
+    Scene("rig12_k", "come rig12_d, con i fotogrammi chiave (uno ogni 3, vita dalla velocita')", 12, 220.0, 1280,
+          720, 60, 20000, 25000, between=3, takes="rig12", scenery="rig12_d", options=("init_keyframes=3",)),
+    Scene("sala16_c", "la scena da mostrare: 12 camere su 220 gradi e 4 in alto, 1920x1080, set nuovo", 12, 220.0,
+          1920, 1080, 60, 20000, 30000, between=3, high=4, takes="sala16"),
 ]
 SMOKE = dict(width=160, height=90, frames=3, scenery_iterations=40, iterations=30)
 ROOTS = {"bench": "bench", "runs": "runs", "show": "consegna", "results": "risultati"}
@@ -192,7 +194,7 @@ def one(scene: Scene, args, results: Path) -> None:
             step("riprese", cmd)
             made.write_text(json.dumps(wanted))
         verify = json.loads((data / "truth" / "cameras.json").read_text())["verify"]
-        if "envelope" not in json.loads((data / "scenery" / "meta.json").read_text()):
+        if not (data / "scenery" / "rig_support.npz").exists():
             # Takes prepared by an earlier version: the starting points of the set are made again.
             step("punti", [*cli, "init", data, "--full-scene", "--exclude", *verify])
 

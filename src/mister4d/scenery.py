@@ -218,7 +218,8 @@ def envelope_of(points: np.ndarray, center: np.ndarray, cameras: np.ndarray) -> 
         around = np.stack([np.roll(reach, k) for k in range(-2, 3)])
         reach = np.median(around, axis=0)  # one direction with a few wrong points does not move the wall
     reach = np.maximum(reach, 1.15 * ring)
-    return {"center": center[:2].tolist(), "floor": floor, "reach": reach.tolist()}
+    return {"center": center[:2].tolist(), "floor": floor, "reach": reach.tolist(), "ring": ring,
+            "top": float(cameras[:, 2].max() + 1.0)}
 
 
 def envelope_reach(envelope: dict, xy: np.ndarray) -> np.ndarray:
@@ -269,16 +270,67 @@ def inside_envelope(envelope: dict, xyz: np.ndarray, margin: float) -> np.ndarra
     return inside
 
 
-def views_of(rig: Rig, cams: list[str], xyz: np.ndarray, border: float = 0.05) -> np.ndarray:
-    """In how many of ``cams`` each point is seen, not counting a ``border`` share at the edges of the image."""
-    count = np.zeros(len(xyz), dtype=np.int32)
-    for name in cams:
-        cam = rig.cameras[name]
-        uv, depth = cam.project(np.asarray(xyz, dtype=np.float64))
-        mx, my = border * cam.width, border * cam.height
-        count += ((depth > 0.05) & (uv[:, 0] > mx) & (uv[:, 0] < cam.width - 1 - mx)
-                  & (uv[:, 1] > my) & (uv[:, 1] < cam.height - 1 - my))
-    return count
+def in_the_rig(envelope: dict, xyz: np.ndarray, margin: float = 0.3) -> np.ndarray:
+    """Which points are between the cameras and the subject: inside the ring of the cameras, in the room.
+
+    That is, nearer to the centre than the farthest camera and than the walls (less ``margin``),
+    more than ``margin`` above the floor and below ``top`` (a metre above the highest camera).
+    """
+    xyz = np.asarray(xyz, dtype=np.float64)
+    rel = xyz[:, :2] - np.asarray(envelope["center"])
+    limit = np.minimum(envelope["ring"], envelope_reach(envelope, xyz[:, :2]) - margin)
+    inside = (np.hypot(rel[:, 0], rel[:, 1]) < limit) & (xyz[:, 2] < envelope["top"])
+    if envelope["floor"] is not None:
+        inside &= xyz[:, 2] > envelope["floor"] + margin
+    return inside
+
+
+class RigGuard:
+    """What an empty set may hold between the cameras and the subject: only what they agree on.
+
+    The space inside the ring of the cameras is empty in an empty set, but for objects that stand
+    there. Those have a texture that at least three cameras find at the same depth (``support``).
+    Anything else there is a guess the images cannot contradict: on a plain wall a grey Gaussian
+    in mid air looks right from every training camera, and from a camera between them it is a
+    grey veil over the subject. ``stray`` tells those apart: in the rig, farther than ``reach``
+    from every supporting point. Outside the rig (walls, floor, what is behind the cameras)
+    nothing is removed: there a Gaussian at the wrong depth hides nothing.
+    """
+
+    def __init__(self, envelope: dict, support: np.ndarray, reach: float = 0.1, voxel: float = 0.05):
+        from scipy import ndimage
+
+        self.envelope, self.voxel = envelope, voxel
+        self.support = np.asarray(support, dtype=np.float32).reshape(-1, 3)
+        pts = self.support.astype(np.float64)
+        k = int(np.ceil(reach / voxel))
+        if len(pts) == 0:
+            self.lo, self.grid = np.zeros(3), np.zeros((1, 1, 1), dtype=bool)
+            return
+        self.lo = pts.min(axis=0) - (k + 1) * voxel
+        shape = np.floor((pts.max(axis=0) + (k + 1) * voxel - self.lo) / voxel).astype(int) + 1
+        grid = np.zeros(shape, dtype=bool)
+        grid[tuple(np.floor((pts - self.lo) / voxel).astype(int).T)] = True
+        ball = np.linalg.norm(np.indices((2 * k + 1,) * 3) - k, axis=0) <= k + 1e-9
+        self.grid = ndimage.binary_dilation(grid, structure=ball)
+
+    def supported(self, xyz: np.ndarray) -> np.ndarray:
+        idx = np.floor((np.asarray(xyz, dtype=np.float64) - self.lo) / self.voxel).astype(int)
+        ok = ((idx >= 0) & (idx < np.array(self.grid.shape))).all(axis=1)
+        out = np.zeros(len(idx), dtype=bool)
+        out[ok] = self.grid[tuple(idx[ok].T)]
+        return out
+
+    def stray(self, xyz: np.ndarray) -> np.ndarray:
+        return in_the_rig(self.envelope, xyz) & ~self.supported(xyz)
+
+    def save(self, folder: Path) -> None:
+        np.savez_compressed(Path(folder) / "rig_support.npz", support=self.support)
+
+    @classmethod
+    def load(cls, folder: Path, envelope: dict) -> "RigGuard":
+        path = Path(folder) / "rig_support.npz"
+        return cls(envelope, np.load(path)["support"] if path.exists() else np.zeros((0, 3)))
 
 
 @torch.no_grad()
@@ -292,9 +344,9 @@ def sweep_points(rig: Rig, cams: list[str], plates: dict[str, np.ndarray], cente
     finds the same surface there, the point is put on it. Elsewhere (plain
     walls, anything only one camera sees) it is put on the envelope of the
     set: its floor, or as far as the sure points reach on that side. Points
-    left in the room that fewer than two cameras see are dropped. ``details``,
-    if given, receives ``sure`` (for every point, whether two cameras agreed
-    on it) and ``envelope``.
+    between the cameras and the subject are kept only near what three cameras
+    agree on (see ``RigGuard``). ``details``, if given, receives ``sure`` (for
+    every point, whether two cameras agreed on it), ``envelope`` and ``guard``.
     """
     device = torch.device(device)
     views = {c: _SweepCamera(rig.cameras[c], plates[c], min(work_width, rig.cameras[c].width), device) for c in cams}
@@ -328,7 +380,7 @@ def sweep_points(rig: Rig, cams: list[str], plates: dict[str, np.ndarray], cente
         ref = views[cam]
         depth, sure = found[cam]
         points = ref.center + depth.clamp(min=0.05)[..., None] * ref.rays
-        agreed = torch.zeros_like(sure)
+        votes = torch.zeros_like(depth)
         for other in cams:
             if other == cam:
                 continue
@@ -338,10 +390,13 @@ def sweep_points(rig: Rig, cams: list[str], plates: dict[str, np.ndarray], cente
             seen = F.grid_sample(other_depth[None, None], grid[None], mode="nearest", align_corners=True)[0, 0]
             ok = F.grid_sample(other_sure[None, None].float(), grid[None], mode="nearest", align_corners=True)[0, 0] > 0.5
             z = (points @ view.R.T + view.t)[..., 2]
-            agreed |= inside & ok & ((seen - z).abs() < 0.03 * z)
-        agreed_on[cam] = ((sure & agreed).cpu().numpy(), points.cpu().numpy())
+            votes += (inside & ok & ((seen - z).abs() < 0.03 * z)).float()
+        agreed_on[cam] = ((sure & (votes >= 1)).cpu().numpy(), points.cpu().numpy(),
+                          (sure & (votes >= 2)).cpu().numpy())
     centers = np.array([rig.cameras[c].center for c in cams], dtype=np.float64)
-    envelope = envelope_of(np.concatenate([p[m] for m, p in agreed_on.values()]), center, centers)
+    envelope = envelope_of(np.concatenate([p[m] for m, p, _ in agreed_on.values()]), center, centers)
+    strong = np.concatenate([p[m] for _, p, m in agreed_on.values()])
+    guard = RigGuard(envelope, strong[in_the_rig(envelope, strong)])
     all_xyz, all_rgb, all_sure, shares = [], [], [], []
     for cam in cams:
         ref = views[cam]
@@ -362,16 +417,15 @@ def sweep_points(rig: Rig, cams: list[str], plates: dict[str, np.ndarray], cente
     _, first = np.unique(np.round(xyz / cell).astype(np.int64), axis=0, return_index=True)
     first.sort()
     xyz, rgb, flags = xyz[first], rgb[first], np.concatenate(all_sure)[first]
-    # In the room, where the subject and the cameras are, a point that fewer than two cameras
-    # see has nothing to hold it in place: the training would leave it there, as a veil.
-    alone = inside_envelope(envelope, xyz, 0.3) & (views_of(rig, cams, xyz) < 2)
-    xyz, rgb, flags = xyz[~alone], rgb[~alone], flags[~alone]
+    stray = guard.stray(xyz)
+    xyz, rgb, flags = xyz[~stray], rgb[~stray], flags[~stray]
     if details is not None:
-        details["sure"], details["envelope"] = flags, envelope
+        details["sure"], details["envelope"], details["guard"] = flags, envelope, guard
     floor = "no floor found" if envelope["floor"] is None else f"floor at {envelope['floor']:.2f} m"
     log(f"[scenery] plane sweep on {len(cams)} cameras: two cameras agree on the depth of "
         f"{np.mean(shares):.0%} of the pixels; {floor}, the set reaches "
-        f"{min(envelope['reach']):.1f}-{max(envelope['reach']):.1f} m from its centre; {len(xyz)} starting points")
+        f"{min(envelope['reach']):.1f}-{max(envelope['reach']):.1f} m from its centre; "
+        f"{len(guard.support)} points between the cameras that three agree on; {len(xyz)} starting points")
     return xyz.astype(np.float32), rgb.astype(np.float32)
 
 
@@ -410,6 +464,7 @@ def prepare_scenery(data_dir: str | Path, exclude: list[str] | None = None, poin
     xyz, rgb = sweep_points(rig, cams, plates, center, work_width=work_width,
                             per_camera=max(2000, points // len(cams)), device=device, log=log, details=details)
     write_points_ply(out / "init_points.ply", xyz, rgb, np.zeros(len(xyz), dtype=np.int32))
+    details["guard"].save(out)
     # The box of the set, centred where the take is: learning rates and the smallest size of a
     # Gaussian are measured from there in both trainings.
     half = np.percentile(np.abs(xyz - center), 98.0, axis=0) + 0.25
