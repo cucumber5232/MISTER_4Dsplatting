@@ -14,7 +14,8 @@ from mister4d.dataset import MultiViewDataset, read_meta, read_points_ply
 from mister4d.evaluate import evaluate_run
 from mister4d.export import ALWAYS, export_web, pack_chunk
 from mister4d.model import DynamicScene, init_gaussian_params, load_checkpoint, render_scene, scenery_of
-from mister4d.scenery import change_masks, estimate_plates, sweep_points
+from mister4d.scenery import (_on_envelope, change_masks, envelope_of, estimate_plates, inside_envelope,
+                              sweep_points, views_of)
 
 quiet = lambda *_: None  # noqa: E731
 
@@ -121,6 +122,69 @@ def test_the_test_rig_can_have_cameras_that_look_down_on_the_subject():
         assert (uv[:, 0] > 0).all() and (uv[:, 0] < 159).all() and (uv[:, 1] > 0).all() and (uv[:, 1] < 89).all()
 
 
+def _room(rng, wall_from=-180.0, wall_to=180.0):
+    """Points on the floor of a round room of 5 m and on its wall, in the directions asked for."""
+    a, r = rng.uniform(-np.pi, np.pi, 6000), 5.0 * np.sqrt(rng.uniform(0, 1, 6000))
+    floor = np.stack([r * np.cos(a), r * np.sin(a), rng.normal(0.0, 0.004, 6000)], axis=1)
+    a = np.radians(rng.uniform(wall_from, wall_to, 6000))
+    wall = np.stack([5.0 * np.cos(a), 5.0 * np.sin(a), rng.uniform(0.0, 3.0, 6000)], axis=1)
+    return np.concatenate([floor, wall])
+
+
+def test_the_envelope_of_a_set_is_its_floor_and_its_walls_also_where_no_point_shows_them():
+    rng = np.random.default_rng(0)
+    cameras = np.array([[2.0 * np.cos(a), 2.0 * np.sin(a), 1.4] for a in np.radians([-60.0, 0.0, 60.0])])
+    points = _room(rng, -180.0, 90.0)  # a quarter of the wall gave no point
+    a, r = rng.uniform(-np.pi, np.pi, 60), rng.uniform(8.0, 20.0, 60)  # wrong matches, far and scattered
+    stray = np.stack([r * np.cos(a), r * np.sin(a), rng.uniform(0.0, 3.0, 60)], axis=1)
+    in_front = np.array([[2.6, 0.2 * k, 1.0] for k in range(-3, 4)])  # a few wrong points in mid air
+    env = envelope_of(np.concatenate([points, stray, in_front]), np.zeros(3), cameras)
+    assert abs(env["floor"]) < 0.02
+    assert min(env["reach"]) > 4.8 and max(env["reach"]) < 5.3  # neither the stray points nor the gap move it
+
+    # A ray is carried to where it leaves the set: at the floor, or at the wall.
+    origin = cameras[1]
+    rays = np.array([[[-1.0, 0.0, 0.0], [-1.0, 0.0, -0.5], [-1.0, 0.0, 0.2], [0.0, 0.0, -1.0]]])
+    depth = _on_envelope(rays, origin, env, far=50.0)[0]
+    assert abs(depth[0] - (2.0 + env["reach"][0])) < 0.15  # level, across the room, to the wall beyond
+    assert abs(depth[1] - 2.8) < 0.05 and abs(depth[3] - 1.4) < 0.02  # down to the floor, 1.4 m below
+    assert abs(depth[2] - depth[0]) < 0.15  # upwards: the wall again, there is no ceiling to stop at
+
+    inside = inside_envelope(env, np.array([[0.0, 0.0, 1.0], [4.95, 0.0, 1.0], [0.0, 0.0, 0.1], [7.0, 0.0, 1.0]]), 0.3)
+    assert inside.tolist() == [True, False, False, False]
+
+    # With nothing above the floor the set reaches as far as its floor is seen; with no point at
+    # all, twice as far as the cameras.
+    a, r = rng.uniform(-np.pi, np.pi, 40000), 5.0 * np.sqrt(rng.uniform(0, 1, 40000))
+    bare = envelope_of(np.stack([r * np.cos(a), r * np.sin(a), np.zeros(40000)], axis=1), np.zeros(3), cameras)
+    assert 4.5 < min(bare["reach"]) and max(bare["reach"]) < 5.3
+    assert envelope_of(np.zeros((0, 3)), np.zeros(3), cameras)["reach"][0] == pytest.approx(4.0)
+
+
+def test_what_hangs_in_the_room_where_one_camera_alone_sees_it_is_told_apart():
+    from mister4d.trainer import lonely_in_the_room
+
+    center = np.array([0.0, 0.0, 1.0])
+    cams = {}
+    for i, degrees in enumerate((-100.0, -30.0, 30.0, 100.0)):
+        a = np.radians(degrees)
+        R, t = look_at(center + [3.0 * np.cos(a), 3.0 * np.sin(a), 0.4], center)
+        cams[f"cam{i}"] = Camera(f"cam{i}", 64, 48, [[60.0, 0, 31.5], [0, 60.0, 23.5], [0, 0, 1]], np.zeros(5), R, t)
+    rig = Rig(cams)
+    env = {"center": [0.0, 0.0], "floor": 0.0, "reach": [6.0] * 72}
+    points = np.array([[0.0, 0.0, 1.0],   # where the subject stands: every camera sees it
+                       [3.2, 0.0, 1.4],   # between two cameras, beside both: nobody looks there
+                       [3.2, 0.0, 0.1],   # the same place, on the floor
+                       [5.9, 0.0, 1.4]])  # behind the cameras, on the wall
+    seen = views_of(rig, list(cams), points)
+    assert seen[0] == 4 and seen[1] < 2 and seen[3] < 2
+    viewmats = torch.tensor(np.stack([c.world_to_cam() for c in cams.values()]), dtype=torch.float32)
+    Ks = torch.tensor(np.stack([c.K for c in cams.values()]), dtype=torch.float32)
+    lonely = lonely_in_the_room(torch.tensor(points, dtype=torch.float32), viewmats, Ks, 64, 48, env)
+    assert lonely.tolist() == [False, True, False, False]  # only what is in mid air and unseen
+    assert (lonely.numpy() == (inside_envelope(env, points, 0.3) & (seen < 2))).all()  # as when the points are made
+
+
 def test_the_orbit_of_the_video_can_stay_inside_the_arc_of_the_cameras():
     from mister4d.render import orbit_path
 
@@ -162,6 +226,14 @@ def test_plane_sweeps_put_the_set_where_a_camera_that_gave_no_points_sees_it():
     assert len(xyz) > 20_000 and np.isfinite(xyz).all()
     # The studio is a floor and a wall six metres away: nearly all the points are inside it.
     assert (np.linalg.norm(xyz[:, :2], axis=1) < 8.0).mean() > 0.9 and (np.abs(xyz[:, 2] - 2.0) < 4.0).mean() > 0.9
+    # Hardly any is left in mid air where the subject and the cameras are: there it would be a veil.
+    from mister4d.human import _stand
+
+    radius = np.hypot(xyz[:, 0], xyz[:, 1])
+    off = np.minimum(np.abs(xyz[:, 2]), np.abs(radius - 6.0))
+    for middle, R, axes, *_ in _stand():  # the lamp behind the subject is there
+        off = np.minimum(off, np.maximum(np.linalg.norm((xyz - middle) @ R, axis=1) - float(np.max(axes)), 0.0))
+    assert ((off > 0.4) & (radius < 4.5) & (xyz[:, 2] > 0.3) & (xyz[:, 2] < 3.0)).mean() < 0.03
     uv, depth = check.project(xyz.astype(np.float64))
     u, v = np.round(uv[:, 0]).astype(int), np.round(uv[:, 1]).astype(int)
     ok = (depth > 0.05) & (u >= 0) & (u < width) & (v >= 0) & (v < height)

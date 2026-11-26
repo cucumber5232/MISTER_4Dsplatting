@@ -343,6 +343,39 @@ def evaluate_views(scene, ds, frame_indices, cams, device, backend, antialiased=
     return {"psnr": float(np.mean(values))}
 
 
+@torch.no_grad()
+def lonely_in_the_room(means: torch.Tensor, viewmats: torch.Tensor, Ks: torch.Tensor, width: int, height: int,
+                       envelope: dict, margin: float = 0.3, border: float = 0.05, views: int = 2) -> torch.Tensor:
+    """Gaussians of a set that hang in its room where fewer than ``views`` cameras see them.
+
+    ``envelope`` is that of ``scenery.envelope_of``: the floor of the set and how far it reaches.
+    On the envelope a Gaussian is where the walls and the floor are, and hides nothing. In the
+    room, more than ``margin`` inside it, a Gaussian that one camera alone sees (or none: the
+    ``border`` of an image does not count) is held in place by nothing. The images are the same
+    wherever it is along the ray, so the training leaves it where it started, in front of the
+    views between the cameras.
+    """
+    seen = torch.zeros(means.shape[0], dtype=torch.int32, device=means.device)
+    for viewmat, K in zip(viewmats, Ks):
+        cam = means @ viewmat[:3, :3].T + viewmat[:3, 3]
+        z = cam[:, 2].clamp(min=1e-6)
+        u = K[0, 0] * cam[:, 0] / z + K[0, 2]
+        v = K[1, 1] * cam[:, 1] / z + K[1, 2]
+        seen += ((cam[:, 2] > 0.05) & (u > border * width) & (u < (1.0 - border) * width - 1)
+                 & (v > border * height) & (v < (1.0 - border) * height - 1)).int()
+    reach = torch.tensor(envelope["reach"], dtype=means.dtype, device=means.device)
+    rel = means[:, :2] - torch.tensor(envelope["center"], dtype=means.dtype, device=means.device)
+    at = (torch.atan2(rel[:, 1], rel[:, 0]) + math.pi) / (2 * math.pi) * len(reach) - 0.5
+    lo = torch.floor(at)
+    frac = at - lo
+    lo = lo.long()
+    limit = reach[lo % len(reach)] * (1.0 - frac) + reach[(lo + 1) % len(reach)] * frac
+    inside = torch.linalg.norm(rel, dim=-1) < limit - margin
+    if envelope.get("floor") is not None:
+        inside &= means[:, 2] > envelope["floor"] + margin
+    return inside & (seen < views)
+
+
 def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                   window: tuple[int, int] | None = None, core: tuple[int, int] | None = None,
                   fixed_offsets: dict | None = None, start: dict | None = None,
@@ -455,6 +488,12 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
         if offsets is None:
             return {}
         return {c: float(v) for c, v in zip(train_cams, (offsets.detach() * offset_free).cpu())}
+
+    # An empty set comes with its envelope (scenery.prepare_scenery): what hangs in the room
+    # where fewer than two cameras see it is removed as the training goes.
+    envelope = ds.meta.get("envelope") if static and not masked else None
+    if envelope is not None:
+        guard_views, guard_Ks = ds.camera_tensors(train_cams, master)
 
     # Densification: gsplat's default strategy (clone / split / prune). Two
     # instances share one state so that growth can be switched off at the cap.
@@ -652,6 +691,11 @@ def _train_window(data_dir: str | Path, out_dir: str | Path, cfg: TrainConfig,
                         too_big = torch.exp(scene.params["scales"]).max(dim=-1).values > cfg.prune_scale
                     if 0 < int(too_big.sum()) < scene.num_gaussians:
                         remove(scene.params, optimizers, strategy_state, too_big)
+                if envelope is not None and (step % cfg.densify_every == 0 or step == iterations - 1):
+                    lonely = lonely_in_the_room(scene.params["means"].detach(), guard_views, guard_Ks,
+                                                ds.width, ds.height, envelope)
+                    if 0 < int(lonely.sum()) < scene.num_gaussians:
+                        remove(scene.params, optimizers, strategy_state, lonely)
                 if (cfg.opacity_reset_every > 0 and step > 0 and step % cfg.opacity_reset_every == 0
                         and step < active.refine_stop_iter):
                     reset_opa(scene.params, optimizers, strategy_state, value=cfg.prune_opacity * 2.0)

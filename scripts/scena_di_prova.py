@@ -22,8 +22,8 @@ If it fails the long ones are not started. A scene already measured is skipped; 
 was interrupted continues from what it had finished. risultati.zip is written again after every
 scene, so it can be sent before the last one is done.
 
-Some scenes are the same takes trained with different options. The scene to show is trained last,
-with the options of the trial that came out best on the cameras never used for training.
+A scene can use the takes already made for another one (same cameras, same frames). Scenes of
+earlier versions of this script are not done again: their measures stay in risultati/.
 """
 
 from __future__ import annotations
@@ -59,50 +59,19 @@ class Scene:
     takes: str = ""  # the takes of this other scene: same cameras, same frames
     scenery: str = ""  # the set trained for this other scene, when its takes and options are the same
     options: tuple = ()  # training options of this scene only
-    best_of: tuple = ()  # trials: the options of the one that came out best are added
     always: bool = False  # done again at every start
 
 
-TRIALS = ("rig12_b", "rig12_logit", "rig12_fermo", "rig12_solido")
 SCENES = [
     Scene("prova_rapida", "controllo veloce: tutta la catena in piccolo", 4, 150.0, 480, 270, 8, 1500, 1500,
           high=1, always=True),
-    Scene("rig4", "4 camere su un arco di 150 gradi (prima prova)", 4, 150.0, 1280, 720, 60, 20000, 25000),
-    Scene("rig12", "12 camere su un arco di 220 gradi (prima prova)", 12, 220.0, 1280, 720, 60, 20000, 25000,
-          between=3),
-    Scene("rig12_b", "le riprese di rig12, con il set che non si consuma più", 12, 220.0, 1280, 720, 60, 20000,
-          25000, between=3, takes="rig12"),
-    Scene("rig12_logit", "come rig12_b, con il decadimento che risparmia le macchie piene", 12, 220.0, 1280, 720,
-          60, 20000, 25000, between=3, takes="rig12", scenery="rig12_b", options=("opacity_decay_logit=true",)),
-    Scene("rig12_fermo", "come rig12_b, senza decadimento nella ripresa", 12, 220.0, 1280, 720,
-          60, 20000, 25000, between=3, takes="rig12", scenery="rig12_b", options=("opacity_decay=0.0",)),
-    Scene("rig12_solido", "come rig12_b, con le macchie spinte a essere piene oppure vuote", 12, 220.0, 1280, 720,
-          60, 20000, 25000, between=3, takes="rig12", scenery="rig12_b", options=("lambda_opacity_entropy=0.005",)),
-    Scene("sala16", "la scena da mostrare: 12 camere su 220 gradi e 4 in alto, 1920x1080", 12, 220.0, 1920, 1080,
-          60, 30000, 40000, between=3, high=4, best_of=TRIALS),
-    Scene("rig4_b", "le riprese di rig4, con il set che non si consuma più", 4, 150.0, 1280, 720, 60, 20000,
-          25000, takes="rig4"),
+    Scene("sala16_b", "la scena da mostrare: 12 camere su 220 gradi e 4 in alto, 1920x1080", 12, 220.0, 1920, 1080,
+          60, 20000, 30000, between=3, high=4, takes="sala16"),
+    Scene("rig12_c", "12 camere su 220 gradi, 1280x720: le riprese di rig12 con il set nuovo", 12, 220.0, 1280, 720,
+          60, 20000, 25000, between=3, takes="rig12"),
 ]
 SMOKE = dict(width=160, height=90, frames=3, scenery_iterations=40, iterations=30)
 ROOTS = {"bench": "bench", "runs": "runs", "show": "consegna", "results": "risultati"}
-
-
-def subject_psnr(results: Path, name: str) -> float | None:
-    """How well a scene shows the subject from the cameras never trained on, or None if not measured."""
-    try:
-        return float(json.loads((results / name / "metrics.json").read_text())["verify"]["psnr_subject"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-
-
-def best_trial(scene: Scene, results: Path) -> tuple[str, tuple]:
-    """The name and the options of the trial of ``scene`` that came out best ("" if none was measured)."""
-    measured = {name: subject_psnr(results, name) for name in scene.best_of}
-    measured = {name: value for name, value in measured.items() if value is not None}
-    if not measured:
-        return "", ()
-    best = max(measured, key=measured.get)
-    return best, next(s.options for s in SCENES if s.name == best)
 
 
 def say(text: str) -> None:
@@ -186,13 +155,6 @@ def one(scene: Scene, args, results: Path) -> None:
     note = [f"# {scene.name}", "", scene.what + ".", "",
             f"{scene.cameras + scene.high} camere di training, {scene.width}x{scene.height}, {scene.frames} frame; "
             f"{scene.scenery_iterations} passi per il set, {scene.iterations} per la ripresa.", ""]
-    if scene.best_of:
-        best, extra = best_trial(scene, results)
-        options += extra
-        values = ", ".join(f"{n} {v:.2f}" for n in scene.best_of if (v := subject_psnr(results, n)) is not None)
-        note += [f"Opzioni prese dalla prova riuscita meglio ({best}): {' '.join(extra) or 'quelle normali'}. "
-                 f"PSNR del soggetto dalle camere di verifica: {values}." if best else
-                 "Nessuna prova misurata da cui prendere le opzioni: usate quelle normali.", ""]
     if options:
         note += ["Opzioni di training di questa scena: " + " ".join(options) + ".", ""]
     seconds = {}
@@ -230,11 +192,15 @@ def one(scene: Scene, args, results: Path) -> None:
             step("riprese", cmd)
             made.write_text(json.dumps(wanted))
         verify = json.loads((data / "truth" / "cameras.json").read_text())["verify"]
+        if "envelope" not in json.loads((data / "scenery" / "meta.json").read_text()):
+            # Takes prepared by an earlier version: the starting points of the set are made again.
+            step("punti", [*cli, "init", data, "--full-scene", "--exclude", *verify])
 
         # 2. The whole scene: the empty set first, then the take on top of it.
         if args.redo:
             shutil.rmtree(run_dir, ignore_errors=True)
-        (run_dir / "evalq" / "metrics.json").unlink(missing_ok=True)  # measures of an earlier training
+        for stale in ("metrics.json", "set.json", "set_points.npz"):  # measures of an earlier training
+            (run_dir / "evalq" / stale).unlink(missing_ok=True)
         ready = REPO / ROOTS["runs"] / scene.scenery / "scenery" if scene.scenery else None
         if ready and (ready / "ckpt.pt").exists() and not (run_dir / "scenery" / "ckpt.pt").exists():
             shutil.rmtree(run_dir / "scenery", ignore_errors=True)
@@ -249,6 +215,8 @@ def one(scene: Scene, args, results: Path) -> None:
         # 3. Measures and pictures on the cameras that were never used.
         middle = scene.frames // 2
         step("misure", [py, "scripts/quality_check.py", run_dir], needed=False)
+        if not scene.scenery:  # the set against the studio, where it was trained
+            step("set", [py, "scripts/make_benchmark.py", "set", run_dir], needed=False)
         step("viste", [py, "scripts/contact_sheet.py", run_dir, run_dir / "viste.png", "--scale", 1, "--zoom", 2.0,
                        "--width", 480, "--steps", 6, "--frames", f"0,{middle},{scene.frames - 1}"], needed=False)
 
@@ -262,6 +230,10 @@ def one(scene: Scene, args, results: Path) -> None:
         raise
     finally:
         for src, dst in ((run_dir / "evalq" / "metrics.json", "metrics.json"),
+                         (run_dir / "evalq" / "set.json", "set.json"),
+                         (run_dir / "evalq" / "set_points.npz", "set_points.npz"),
+                         (run_dir / "train_log.jsonl", "train_log.jsonl"),
+                         (run_dir / "scenery" / "train_log.jsonl", "scenery_log.jsonl"),
                          (run_dir / "train_summary.json", "train_summary.json"),
                          (run_dir / "scenery" / "train_summary.json", "scenery_summary.json"),
                          (run_dir / "config.yaml", "config.yaml")):
@@ -278,9 +250,17 @@ def one(scene: Scene, args, results: Path) -> None:
             if group in metrics:
                 note.append(f"- camere {'di verifica' if group == 'verify' else 'di training'}: "
                             + ", ".join(f"{k} {v:.2f}" for k, v in metrics[group].items()))
+        for cam, row in metrics.get("verify_per_camera", {}).items():
+            note.append(f"  - {cam}: " + ", ".join(f"{k} {v:.2f}" for k, v in row.items()
+                                                   if k in ("psnr", "psnr_subject", "depth_cm")))
         if metrics:
             note.append(f"- Gaussiane della ripresa {metrics.get('gaussians')}, del set {metrics.get('scenery')}; "
                         f"opache {100 * metrics.get('opaque_share', 0):.0f}%, ad ago {100 * metrics.get('needle_share', 0):.0f}%")
+        if (out / "set.json").exists():
+            the_set = json.loads((out / "set.json").read_text())
+            note.append(f"- set: {the_set['in_air']} Gaussiane a mezz'aria nella stanza "
+                        f"({100 * the_set['in_air_opacity_share']:.1f}% dell'opacità); dalle camere di verifica "
+                        f"il {100 * the_set['verify']['in_front_share']:.1f}% dell'immagine è disegnato davanti al set")
         sizes = [f"{f.name} {f.stat().st_size / 1e6:.0f} MB" for f in sorted(show.glob("*")) if f.is_file()]
         note += ["", f"Da mostrare (in {ROOTS['show']}/{scene.name}): " + (", ".join(sizes) or "niente"), ""]
         (out / "NOTE.md").write_text("\n".join(note), encoding="utf-8")

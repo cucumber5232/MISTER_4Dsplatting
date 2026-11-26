@@ -3,6 +3,7 @@
     python scripts/make_benchmark.py dataset OUT --width 960 --height 540 --frames 12
     python scripts/make_benchmark.py raw OUT --width 960 --height 540 --frames 30
     python scripts/make_benchmark.py sheets DATASET   # contact sheets of an existing dataset
+    python scripts/make_benchmark.py set RUN          # the trained set of a whole scene against the studio
 
 Development tool: it needs the package installed (run it with the Python of .venv).
 
@@ -275,6 +276,98 @@ def closeups(out: Path, frames=(0, 14, 26, 50), height: int = 900) -> Path:
     return out
 
 
+def studio_distance(xyz: np.ndarray) -> np.ndarray:
+    """Distance (m) of points from the nearest surface of the studio: its floor, its wall, the lamp."""
+    from mister4d.human import WALL_RADIUS, _stand
+
+    xyz = np.asarray(xyz, dtype=np.float64)
+    r = np.hypot(xyz[:, 0], xyz[:, 1])
+    beyond = np.maximum(r - WALL_RADIUS, 0.0)
+    off = np.minimum(np.hypot(xyz[:, 2], beyond), np.hypot(r - WALL_RADIUS, np.minimum(xyz[:, 2], 0.0)))
+    for center, R, radii, *_ in _stand():
+        off = np.minimum(off, np.maximum(np.linalg.norm((xyz - center) @ R, axis=1) - float(np.max(radii)), 0.0))
+    return off
+
+
+def studio_depth(cam) -> np.ndarray:
+    """Depth of the empty studio along the pixels of ``cam`` (floor and wall; the lamp is left out)."""
+    from mister4d.human import WALL_RADIUS
+
+    v, u = np.mgrid[0:cam.height, 0:cam.width].astype(np.float64)
+    K = np.asarray(cam.K)
+    rays = np.stack([(u - K[0, 2]) / K[0, 0], (v - K[1, 2]) / K[1, 1], np.ones_like(u)], axis=-1) @ np.asarray(cam.R)
+    o = np.asarray(cam.center)
+    a = rays[..., 0] ** 2 + rays[..., 1] ** 2
+    b = rays[..., 0] * o[0] + rays[..., 1] * o[1]
+    wall = (-b + np.sqrt(np.maximum(b * b - a * (o[0] ** 2 + o[1] ** 2 - WALL_RADIUS ** 2), 0.0))) / np.maximum(a, 1e-12)
+    floor = np.where(rays[..., 2] < -1e-6, -o[2] / np.minimum(rays[..., 2], -1e-6), np.inf)
+    return np.minimum(wall, floor)
+
+
+def check_set(run: Path, device: str = "auto", keep: int = 200_000) -> dict:
+    """The set of a whole scene against the studio it was rendered from.
+
+    How much of it hangs in mid air where the subject and the cameras are, and, from every
+    verification camera, how much of the picture is drawn in front of where the set is: a veil
+    there does not show in the measures of the training cameras. Writes ``evalq/set.json`` and
+    ``evalq/set_points.npz`` (up to ``keep`` Gaussians: position, opacity, size), small enough
+    to send.
+    """
+    import torch
+
+    from mister4d.dataset import MultiViewDataset
+    from mister4d.model import load_checkpoint, render_scene
+    from mister4d.rasterizer import resolve_backend
+    from mister4d.trainer import pick_device
+
+    dev = pick_device(device)
+    scene, ckpt = load_checkpoint(run / "scenery" / "ckpt.pt", dev)
+    source = Path(ckpt["meta"]["data_dir"])
+    ds = MultiViewDataset(source, masks=False)
+    names = json.loads((source.parent / "truth" / "cameras.json").read_text())
+    backend = resolve_backend(ckpt["config"].get("backend", "auto"), dev)
+    means = scene.params["means"].detach().cpu().numpy()
+    opacity = torch.sigmoid(scene.params["opacities"].detach()).cpu().numpy().ravel()
+    size = torch.exp(scene.params["scales"].detach()).max(dim=-1).values.cpu().numpy()
+    r = np.hypot(means[:, 0], means[:, 1])
+    air = (studio_distance(means) > 0.4) & (r < 5.5) & (means[:, 2] > 0.3) & (means[:, 2] < 3.5)
+    out = {"gaussians": int(len(means)), "in_air": int(air.sum()),
+           "in_air_opacity_share": float(opacity[air].sum() / max(opacity.sum(), 1e-9)),
+           "in_air_largest_m": float(size[air].max()) if air.any() else 0.0, "cameras": {}}
+    for group in ("train", "verify"):
+        for name in names[group]:
+            cam = ds.rig.cameras[name]
+            viewmats, Ks = ds.camera_tensors([name], dev)
+            gt, _ = ds.batch(0, [name], dev)
+            with torch.no_grad():
+                rgb, alpha, depth, *_ = render_scene(scene, 0, viewmats, Ks, ds.width, ds.height, backend=backend)
+            drawn = (depth[0, ..., 0] / alpha[0, ..., 0].clamp(min=1e-3)).cpu().numpy()
+            true = studio_depth(cam)
+            near = float(np.linalg.norm(means - np.asarray(cam.center), axis=1).min()) if len(means) else 0.0
+            around = np.linalg.norm(means - np.asarray(cam.center), axis=1) < 1.0
+            out["cameras"][name] = {
+                "group": group, "psnr": float(-10.0 * torch.log10(((rgb.clamp(0, 1) - gt) ** 2).mean()).item()),
+                "alpha": float(alpha.mean()), "depth_error_m": float(np.median(np.abs(drawn - true))),
+                "in_front_share": float(((true - drawn) > 0.5).mean()),
+                "nearest_gaussian_m": near, "opacity_within_1m": float(opacity[around].sum())}
+    for group in ("train", "verify"):
+        rows = [v for v in out["cameras"].values() if v["group"] == group]
+        out[group] = {k: float(np.mean([row[k] for row in rows])) for k in ("psnr", "depth_error_m", "in_front_share")}
+    target = run / "evalq"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "set.json").write_text(json.dumps(out, indent=2))
+    pick = np.random.default_rng(0).choice(len(means), size=min(keep, len(means)), replace=False)
+    np.savez_compressed(target / "set_points.npz", xyz=means[pick].astype(np.float16),
+                        opacity=np.round(opacity[pick] * 255).astype(np.uint8), size=size[pick].astype(np.float16))
+    print(f"[bench] set: {out['gaussians']} Gaussians, {out['in_air']} in mid air in the room "
+          f"({100 * out['in_air_opacity_share']:.1f}% of the opacity)")
+    for name, row in out["cameras"].items():
+        if row["group"] == "verify":
+            print(f"[bench]   {name}: psnr {row['psnr']:.2f}  drawn in front of the set {100 * row['in_front_share']:.1f}%  "
+                  f"depth error {row['depth_error_m']:.2f} m  nearest Gaussian {row['nearest_gaussian_m']:.2f} m")
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="what", required=True)
@@ -308,6 +401,9 @@ def main() -> None:
     p.add_argument("--scale", type=float, default=1.0)
     p = sub.add_parser("closeups")
     p.add_argument("out", help="image to write")
+    p = sub.add_parser("set", help="the trained set of a whole scene against the studio")
+    p.add_argument("run")
+    p.add_argument("--device", default="auto")
     args = ap.parse_args()
 
     if args.what == "dataset":
@@ -319,6 +415,8 @@ def main() -> None:
         check_raw(make_raw(Path(args.out), args.width, args.height, args.frames, args.cameras, args.seed))
     elif args.what == "sheets":
         print(*sheets(Path(args.data), args.out, args.scale), sep="\n")
+    elif args.what == "set":
+        check_set(Path(args.run), args.device)
     else:
         print(closeups(Path(args.out)))
 

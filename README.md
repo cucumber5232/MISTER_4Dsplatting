@@ -452,13 +452,9 @@ Fa più scene, una dopo l'altra.
 
 - `prova_rapida` controlla soltanto che tutto funzioni su quel computer.
   Dura pochi minuti e viene rifatta a ogni avvio.
-- `rig12_b`, `rig12_logit`, `rig12_fermo` e `rig12_solido` sono le stesse
-  riprese (12 camere su un arco di 220°, 1280×720) addestrate con opzioni
-  diverse.
-- `sala16` è la scena da mostrare: 12 camere sull'arco e 4 in alto,
-  1920×1080, con più passi di training. Usa le opzioni della prova che è
-  riuscita meglio sulle camere di verifica.
-- `rig4_b` ha 4 camere su un arco di 150°.
+- `sala16_b` è la scena da mostrare: 12 camere su un arco di 220° e 4 in
+  alto, 1920×1080.
+- `rig12_c` ha le sole 12 camere sull'arco, a 1280×720.
 
 Alla fine:
 
@@ -467,30 +463,58 @@ Alla fine:
   file da rimandare a chi sviluppa. Viene riscritto dopo ogni scena, quindi
   si può mandare anche prima che tutto sia finito.
 
-Una scena già misurata viene saltata. Se si interrompe, riavviandolo riparte
-da dove era arrivato. Da terminale:
+Una scena già misurata viene saltata. Le scene delle versioni precedenti
+dello script non vengono rifatte, e le loro misure restano in `risultati\`.
+Se si interrompe, riavviandolo riparte da dove era arrivato. Da terminale:
 
 ```bash
-python scripts/scena_di_prova.py --only sala16
+python scripts/scena_di_prova.py --only sala16_b
 ```
 
-Prima prova sulla workstation (due RTX 6000 Ada, 1280×720, 60 frame, scene
-`rig4` e `rig12`): circa 24 passi al secondo, 14 minuti per i 20 000 passi
-del set e 18 per i 25 000 della ripresa.
+### Misure sulla workstation
 
-| Scena | Verifica: PSNR / PSNR soggetto / SSIM | Training: PSNR / PSNR soggetto |
-|---|---|---|
-| `rig12`, 12 camere | 24,6 dB / 21,9 dB / 0,86 | 34,0 dB / 26,6 dB |
-| `rig4`, 4 camere | 16,7 dB / 14,4 dB / 0,67 | 30,4 dB / 26,5 dB |
+Due RTX 6000 Ada. A 1280×720 il training fa circa 24 passi al secondo: 14
+minuti per i 20 000 passi del set e 18 per i 25 000 della ripresa. A
+1920×1080, con 16 camere, 30 000 passi per il set e 40 000 per la ripresa
+durano quasi tre ore.
 
-Con 12 camere la persona regge anche vista da camere mai usate. Con 4 camere
-no. In tutte e due il set era rovinato: semitrasparente, con il pavimento
-sfocato. La causa era il decadimento dell'opacità, che nel set agiva a ogni
-passo su tutte le Gaussiane e ne aveva tolte circa tre su quattro. Ora nel
-set è spento (`scenery_opacity_decay`) e nella ripresa tocca solo le
-Gaussiane che una camera ha disegnato in quel passo. In più, senza maschere
-la scena viene addestrata su un fondo di colore casuale, che la obbliga a
-essere piena. Le scene nuove servono a misurare l'effetto.
+«Verifica» sono camere mai usate nel training. Il PSNR del soggetto è
+misurato nel riquadro della persona.
+
+| Scena | Verifica: PSNR / soggetto | Training: PSNR / soggetto | Note |
+|---|---|---|---|
+| `rig4`, 4 camere, 720p | 16,7 / 14,4 dB | 30,4 / 26,5 dB | set semitrasparente |
+| `rig12`, 12 camere, 720p | 24,6 / 21,9 dB | 34,0 / 26,6 dB | set semitrasparente |
+| `rig12_b`, stesse riprese | 23,2 / 22,4 dB | 37,7 / 30,4 dB | set pieno, velo davanti |
+| `sala16`, 16 camere, 1080p | 25,2 / 26,0 dB | 41,5 / 36,6 dB | set pieno, velo davanti |
+
+Le medie di `sala16` nascondono due situazioni molto diverse. Dalle due
+camere di verifica che stanno tra le camere di training, ai lati, la scena dà
+32 dB e 34,6 dB sul soggetto, con 2,5 cm di errore di profondità: pavimento e
+persona sono nitidi. Dalla camera di verifica frontale dà 21,9 dB, perché
+tutta l'immagine è coperta da un velo grigio.
+
+Che cosa è stato corretto dopo ogni prova:
+
+1. Dopo la prima il set era semitrasparente. Il decadimento dell'opacità,
+   pensato per la ripresa, nel set agiva a ogni passo su tutte le Gaussiane.
+   Ora nel set è spento, e senza maschere la scena viene addestrata su un
+   fondo di colore casuale che la obbliga a essere piena.
+2. Dopo la seconda restava il velo. La causa più probabile sono i punti di
+   partenza del set messi a mezz'aria dove le camere non concordano sulla
+   profondità. Ora quei punti vanno sul contorno del set, e quello che resta
+   a mezz'aria dove meno di due camere guardano viene tolto. La descrizione
+   è in [PIPELINE.md](docs/PIPELINE.md#scena-intera-il-set-e-la-ripresa).
+   La prossima prova misura anche il set da solo contro lo studio vero
+   (`make_benchmark.py set`), per vedere se il velo è sparito.
+
+Le quattro varianti sul decadimento dell'opacità provate nella seconda prova
+(`rig12_b`, `rig12_logit`, `rig12_fermo`, `rig12_solido`) danno lo stesso
+risultato dalle camere di verifica, tra 22,2 e 22,4 dB sul soggetto. Cambia
+il numero di Gaussiane della ripresa: 88 000 con `lambda_opacity_entropy`,
+248 000 con le impostazioni normali, 573 000 senza decadimento.
+
+Con 4 camere il soggetto visto da un punto nuovo non regge in nessuna prova.
 
 ## Training sulle GPU
 

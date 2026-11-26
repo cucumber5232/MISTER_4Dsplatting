@@ -260,9 +260,24 @@ resta fisso sotto tutti gli istanti (`scenery.py`, e `scenery` in `model.py`).
    finestre 7×7). I piani sono di due famiglie: di fronte alla camera, 768 a
    passo costante in profondità inversa, per pareti e fondali, e orizzontali,
    uno ogni centimetro, per i pavimenti. Una profondità vale solo se un'altra
-   camera trova una superficie nello stesso punto (entro il 3%). Dove le
-   camere non concordano, per esempio su una parete uniforme, il punto prende
-   una media morbida delle profondità vicine.
+   camera trova una superficie nello stesso punto (entro il 3%).
+
+   Dove le camere non concordano (una parete uniforme, quello che vede una
+   camera sola) il punto viene messo sul contorno del set. Il contorno si
+   ricava dai punti sicuri: l'altezza del pavimento è la loro quota più
+   frequente, e in ognuna di 72 direzioni attorno al centro il set arriva fin
+   dove arriva il gruppo di punti più lontano sopra il pavimento. Una
+   direzione senza punti prende il valore di quelle vicine. Un punto incerto
+   finisce dove il suo raggio incontra il pavimento o il contorno. Messo
+   troppo lontano non copre niente. Lasciato a mezz'aria diventa un velo
+   davanti alle viste tra una camera e l'altra, perché nessuna immagine lo
+   contraddice.
+
+   Per la stessa ragione un punto che sta nella stanza, a più di 30 cm dal
+   contorno, e che meno di due camere vedono, viene tolto. Il training del
+   set ripete questo controllo a ogni passo di densificazione
+   (`lonely_in_the_room` in `trainer.py`), usando il contorno salvato in
+   `scenery/meta.json`.
 3. Punti di partenza di ciò che si muove: il visual hull, calcolato su tutto
    ciò che differisce dal set vuoto, ombre comprese (`change/`). Queste
    sagome servono solo a mettere le prime Gaussiane. Il training non usa
@@ -308,8 +323,24 @@ sulle camere di verifica, 21,9 dB sul soggetto. Il set partiva da circa
 attorno a 0,6 su parete e pavimento) e con il pavimento sfocato. Veniva
 ancora addestrato con il decadimento dell'opacità, e niente lo obbligava a
 essere pieno. Con 4 camere su 150° il soggetto dalle camere di verifica
-scende a 14,4 dB. Le
-misure dopo la correzione sono in [README](../README.md#scena-di-prova-sulla-workstation).
+scende a 14,4 dB.
+
+Seconda prova su GPU, con il set pieno (16 camere, 1920×1080, 30 000 passi
+per il set e 40 000 per la ripresa, quasi tre ore). Da due camere di verifica
+tra le camere di training la scena dà 32 dB, 34,6 dB sul soggetto, con un
+errore di profondità di 2,5 cm. Dalla camera di verifica frontale dà 21,9 dB:
+tutta l'immagine è coperta da un velo grigio. La causa più probabile sono i
+punti di partenza del set. Le camere concordavano sulla profondità solo nel
+7% dei pixel, e gli altri punti prendevano una media delle profondità
+vicine: su 678 000 punti, 112 000 finivano a mezz'aria nella zona delle
+camere e del soggetto. Dove più camere guardano il training li toglie.
+Davanti alle camere frontali, dove arrivano solo i bordi delle immagini
+delle camere agli estremi dell'arco, è probabile che restino. Con il
+contorno del set i punti a mezz'aria scendono a 3 000, tutti tra quelli su
+cui due camere concordano. In una prova piccola su CPU
+(12 camere, 320×180, 100 passi) il set visto dalle camere di verifica passa
+da 24,4 a 27,0 dB. Le misure su GPU sono riassunte nel
+[README](../README.md#misure-sulla-workstation).
 
 #### Scene leggere: Gaussiane che durano più frame
 

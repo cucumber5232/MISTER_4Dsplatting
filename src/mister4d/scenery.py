@@ -166,32 +166,135 @@ def _sweep(ref: _SweepCamera, others: list[_SweepCamera], normals: torch.Tensor,
     return best_depth, best_cost
 
 
-def _fill(depth: np.ndarray, sure: np.ndarray) -> np.ndarray:
-    """Depth everywhere: where it is not sure, a smooth blend of the sure depths around (in inverse depth)."""
-    known = sure.astype(np.float32)
-    inverse = np.where(sure, 1.0 / np.maximum(depth, 1e-3), 0.0).astype(np.float32)
-    filled, weight = inverse.copy(), known.copy()
-    sigma = 2.0
-    while (weight < 1e-3).any() and sigma < 4.0 * max(depth.shape):
-        num, den = cv2.GaussianBlur(inverse, (0, 0), sigma), cv2.GaussianBlur(known, (0, 0), sigma)
-        take = (weight < 1e-3) & (den > 1e-3)
-        filled[take], weight[take] = num[take] / den[take], 1.0
-        sigma *= 2.0
-    filled[weight < 1e-3] = float(np.median(inverse[sure])) if sure.any() else 0.0
-    return 1.0 / np.maximum(filled, 1e-6)
+SECTORS = 72  # directions around the centre in which the reach of the set is measured
+
+
+def envelope_of(points: np.ndarray, center: np.ndarray, cameras: np.ndarray) -> dict:
+    """The outside of a set, from the points two cameras agree on: its floor and how far it reaches.
+
+    ``floor`` is the most common height of the points below the cameras (None if there is none).
+    ``reach`` is, for each of ``SECTORS`` directions around ``center``, the horizontal distance of
+    the farthest group of points among those within 12 degrees of it: the walls, or as far as the
+    floor is seen. On a plain wall the cameras agree only along its lower edge, so the points of
+    the floor and of the bottom of the walls are what tells where the set ends. A few points
+    alone farther out are wrong matches and do not count; a few points of a wall behind a lamp
+    do. The cameras stand inside the set: a direction whose points all lie nearer than the
+    cameras says nothing about its walls and takes the reach of the directions next to it. When
+    in doubt the envelope is too wide: see ``_on_envelope``.
+    """
+    center = np.asarray(center, dtype=np.float64)
+    floor = None
+    low = points[points[:, 2] < cameras[:, 2].min() - 0.2, 2] if len(points) else np.zeros(0)
+    if len(low) >= 100:
+        hist, edges = np.histogram(low, bins=np.arange(low.min() - 0.02, low.max() + 0.04, 0.02))
+        floor = float(edges[int(np.argmax(hist))] + 0.01)
+    rel = points[:, :2] - center[:2]
+    radius = np.hypot(rel[:, 0], rel[:, 1])
+    sector = np.floor((np.arctan2(rel[:, 1], rel[:, 0]) + np.pi) / (2 * np.pi) * SECTORS).astype(int) % SECTORS
+    ring = float(np.hypot(*(cameras[:, :2] - center[:2]).T).max())
+    step = 0.25
+
+    def farthest_groups(use: np.ndarray) -> np.ndarray:
+        found = np.full(SECTORS, np.nan)
+        for k in range(SECTORS):
+            near = (sector - k + SECTORS // 2) % SECTORS - SECTORS // 2  # sectors from k, either way
+            here = radius[use & (np.abs(near) <= 2)]
+            if len(here) < 20:
+                continue
+            hist, edges = np.histogram(here, bins=np.arange(0.0, here.max() + 2 * step, step))
+            crowded = np.flatnonzero(hist >= max(5, 0.005 * len(here)))
+            if len(crowded) and edges[crowded[-1] + 1] > 1.15 * ring:
+                last = here[(here >= edges[crowded[-1]]) & (here < edges[crowded[-1] + 1])]
+                found[k] = float(np.median(last)) + 0.05
+        return found
+
+    reach = farthest_groups(np.ones(len(points), dtype=bool))
+    if np.isnan(reach).all():
+        reach[:] = 2.0 * ring
+    else:
+        known = np.flatnonzero(~np.isnan(reach))
+        turns = np.concatenate([known - SECTORS, known, known + SECTORS])
+        reach = np.interp(np.arange(SECTORS), turns, np.tile(reach[known], 3))
+        around = np.stack([np.roll(reach, k) for k in range(-2, 3)])
+        reach = np.median(around, axis=0)  # one direction with a few wrong points does not move the wall
+    reach = np.maximum(reach, 1.15 * ring)
+    return {"center": center[:2].tolist(), "floor": floor, "reach": reach.tolist()}
+
+
+def envelope_reach(envelope: dict, xy: np.ndarray) -> np.ndarray:
+    """How far the set reaches, from its centre, in the direction of each point ``xy`` [N, 2]."""
+    reach = np.asarray(envelope["reach"], dtype=np.float64)
+    rel = np.asarray(xy, dtype=np.float64) - np.asarray(envelope["center"])
+    at = (np.arctan2(rel[..., 1], rel[..., 0]) + np.pi) / (2 * np.pi) * SECTORS - 0.5
+    lo = np.floor(at).astype(int)
+    frac = at - lo
+    return reach[lo % SECTORS] * (1.0 - frac) + reach[(lo + 1) % SECTORS] * frac
+
+
+def _on_envelope(rays: np.ndarray, origin: np.ndarray, envelope: dict, far: float) -> np.ndarray:
+    """Depth at which each ray leaves the set: at its floor or at its reach, whichever comes first.
+
+    This is where a pixel is put when the cameras do not agree on its depth (plain walls, what
+    one camera alone sees). It is the farthest place it can be. A point put too far hides
+    nothing; one left in mid air becomes a veil in front of the views between the cameras.
+    """
+    origin = np.asarray(origin, dtype=np.float64)
+    d = rays.reshape(-1, 3).astype(np.float64)
+    level = np.hypot(d[:, 0], d[:, 1])
+    depth = np.full(len(d), far)
+    # Where the ray crosses the reach of the set: the reach depends on the direction of the
+    # crossing point, so it is found in a few rounds from a first guess.
+    o = origin[:2] - np.asarray(envelope["center"])
+    a = level ** 2
+    b = d[:, 0] * o[0] + d[:, 1] * o[1]
+    guess = np.full(len(d), float(np.median(envelope["reach"])))
+    for _ in range(6):
+        c = o @ o - guess ** 2
+        t = (-b + np.sqrt(np.maximum(b * b - a * c, 0.0))) / np.maximum(a, 1e-12)
+        guess = envelope_reach(envelope, origin[:2] + t[:, None] * d[:, :2])
+    depth = np.where(level > 1e-6, np.minimum(depth, t), depth)
+    if envelope["floor"] is not None:
+        down = d[:, 2] < -1e-6
+        depth = np.where(down, np.minimum(depth, (envelope["floor"] - origin[2]) / np.where(down, d[:, 2], -1.0)), depth)
+    return np.clip(depth, 0.05, far).reshape(rays.shape[:-1]).astype(np.float32)
+
+
+def inside_envelope(envelope: dict, xyz: np.ndarray, margin: float) -> np.ndarray:
+    """Which points are in the room of the set, more than ``margin`` from its floor and from its reach."""
+    xyz = np.asarray(xyz, dtype=np.float64)
+    rel = xyz[:, :2] - np.asarray(envelope["center"])
+    inside = np.hypot(rel[:, 0], rel[:, 1]) < envelope_reach(envelope, xyz[:, :2]) - margin
+    if envelope["floor"] is not None:
+        inside &= xyz[:, 2] > envelope["floor"] + margin
+    return inside
+
+
+def views_of(rig: Rig, cams: list[str], xyz: np.ndarray, border: float = 0.05) -> np.ndarray:
+    """In how many of ``cams`` each point is seen, not counting a ``border`` share at the edges of the image."""
+    count = np.zeros(len(xyz), dtype=np.int32)
+    for name in cams:
+        cam = rig.cameras[name]
+        uv, depth = cam.project(np.asarray(xyz, dtype=np.float64))
+        mx, my = border * cam.width, border * cam.height
+        count += ((depth > 0.05) & (uv[:, 0] > mx) & (uv[:, 0] < cam.width - 1 - mx)
+                  & (uv[:, 1] > my) & (uv[:, 1] < cam.height - 1 - my))
+    return count
 
 
 @torch.no_grad()
 def sweep_points(rig: Rig, cams: list[str], plates: dict[str, np.ndarray], center: np.ndarray,
                  work_width: int = 480, depths: int = 768, height_step: float = 0.01, per_camera: int = 60_000,
                  neighbours: int = 2, max_cost: float = 0.5, device: str | torch.device = "cpu",
-                 seed: int = 0, log=print) -> tuple[np.ndarray, np.ndarray]:
+                 seed: int = 0, log=print, details: dict | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Points of the empty set with their colours, from plane sweeps between neighbouring cameras.
 
     Where the plates agree on a depth (textured surfaces), and a second camera
     finds the same surface there, the point is put on it. Elsewhere (plain
-    walls, anything only one camera sees) it takes a smooth blend of the
-    depths around: a guess, good enough to start.
+    walls, anything only one camera sees) it is put on the envelope of the
+    set: its floor, or as far as the sure points reach on that side. Points
+    left in the room that fewer than two cameras see are dropped. ``details``,
+    if given, receives ``sure`` (for every point, whether two cameras agreed
+    on it) and ``envelope``.
     """
     device = torch.device(device)
     views = {c: _SweepCamera(rig.cameras[c], plates[c], min(work_width, rig.cameras[c].width), device) for c in cams}
@@ -220,7 +323,7 @@ def sweep_points(rig: Rig, cams: list[str], plates: dict[str, np.ndarray], cente
         sure = (cost < max_cost) & (texture > 1e-4) & (depth > 0.05) & (depth < 12.0 * reach)
         found[cam] = (depth, sure)
     # A depth counts only if another camera, looking at the same point, found a surface there too.
-    all_xyz, all_rgb, shares = [], [], []
+    agreed_on = {}
     for cam in cams:
         ref = views[cam]
         depth, sure = found[cam]
@@ -236,23 +339,40 @@ def sweep_points(rig: Rig, cams: list[str], plates: dict[str, np.ndarray], cente
             ok = F.grid_sample(other_sure[None, None].float(), grid[None], mode="nearest", align_corners=True)[0, 0] > 0.5
             z = (points @ view.R.T + view.t)[..., 2]
             agreed |= inside & ok & ((seen - z).abs() < 0.03 * z)
-        sure = (sure & agreed).cpu().numpy()
+        agreed_on[cam] = ((sure & agreed).cpu().numpy(), points.cpu().numpy())
+    centers = np.array([rig.cameras[c].center for c in cams], dtype=np.float64)
+    envelope = envelope_of(np.concatenate([p[m] for m, p in agreed_on.values()]), center, centers)
+    all_xyz, all_rgb, all_sure, shares = [], [], [], []
+    for cam in cams:
+        ref = views[cam]
+        sure = agreed_on[cam][0]
         shares.append(float(sure.mean()))
-        depth = _fill(depth.cpu().numpy(), sure) if sure.any() else np.full(sure.shape, reach, dtype=np.float32)
+        outside = _on_envelope(ref.rays.cpu().numpy(), centers[cams.index(cam)], envelope, 12.0 * reach)
+        depth = np.where(sure, found[cam][0].cpu().numpy(), outside)
         weight = np.where(sure, 1.0, 0.35).ravel()
         count = min(per_camera, weight.size)
         pick = rng.choice(weight.size, size=count, replace=False, p=weight / weight.sum())
         rays = ref.rays.cpu().numpy().reshape(-1, 3)[pick]
         all_xyz.append(np.asarray(rig.cameras[cam].center, dtype=np.float64) + depth.ravel()[pick, None] * rays)
         all_rgb.append(ref.rgb.reshape(-1, 3)[pick])
+        all_sure.append(sure.ravel()[pick])
     xyz, rgb = np.concatenate(all_xyz), np.concatenate(all_rgb)
     # The cameras overlap: one point per cell of a fine grid is enough.
     cell = max(0.01, reach / 400.0)
     _, first = np.unique(np.round(xyz / cell).astype(np.int64), axis=0, return_index=True)
     first.sort()
+    xyz, rgb, flags = xyz[first], rgb[first], np.concatenate(all_sure)[first]
+    # In the room, where the subject and the cameras are, a point that fewer than two cameras
+    # see has nothing to hold it in place: the training would leave it there, as a veil.
+    alone = inside_envelope(envelope, xyz, 0.3) & (views_of(rig, cams, xyz) < 2)
+    xyz, rgb, flags = xyz[~alone], rgb[~alone], flags[~alone]
+    if details is not None:
+        details["sure"], details["envelope"] = flags, envelope
+    floor = "no floor found" if envelope["floor"] is None else f"floor at {envelope['floor']:.2f} m"
     log(f"[scenery] plane sweep on {len(cams)} cameras: two cameras agree on the depth of "
-        f"{np.mean(shares):.0%} of the pixels; {len(first)} starting points")
-    return xyz[first].astype(np.float32), rgb[first].astype(np.float32)
+        f"{np.mean(shares):.0%} of the pixels; {floor}, the set reaches "
+        f"{min(envelope['reach']):.1f}-{max(envelope['reach']):.1f} m from its centre; {len(xyz)} starting points")
+    return xyz.astype(np.float32), rgb.astype(np.float32)
 
 
 def prepare_scenery(data_dir: str | Path, exclude: list[str] | None = None, points: int = 400_000,
@@ -286,14 +406,16 @@ def prepare_scenery(data_dir: str | Path, exclude: list[str] | None = None, poin
         else np.array(vol["center"], dtype=np.float64)
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
+    details = {}
     xyz, rgb = sweep_points(rig, cams, plates, center, work_width=work_width,
-                            per_camera=max(2000, points // len(cams)), device=device, log=log)
+                            per_camera=max(2000, points // len(cams)), device=device, log=log, details=details)
     write_points_ply(out / "init_points.ply", xyz, rgb, np.zeros(len(xyz), dtype=np.int32))
     # The box of the set, centred where the take is: learning rates and the smallest size of a
     # Gaussian are measured from there in both trainings.
     half = np.percentile(np.abs(xyz - center), 98.0, axis=0) + 0.25
     write_meta(out, meta["fps"], [0], meta["cameras"],
                {"source": "empty set", "plates": meta.get("plates", "recorded"), "init_cameras": cams,
+                "envelope": details["envelope"],
                 "bbox_min": (center - half).tolist(), "bbox_max": (center + half).tolist()})
     log(f"[scenery] the set spans {np.round(2 * half, 1).tolist()} m -> {out}")
     return out
