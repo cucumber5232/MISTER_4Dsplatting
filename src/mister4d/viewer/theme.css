@@ -111,6 +111,10 @@ input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border: 0; bo
   background: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, .35); }
 input[type="range"]:focus-visible { outline-offset: 4px; border-radius: 6px; }
 
+/* A single option: a native checkbox and its words. */
+.check { display: flex; align-items: center; gap: 8px; min-height: 36px; color: var(--text); cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent-fill); cursor: pointer; }
+
 /* Radio groups drawn as chips or as a segmented control (native inputs underneath). */
 .choices { display: flex; flex-wrap: wrap; gap: 8px; }
 .choices label { position: relative; flex: 1 1 auto; }

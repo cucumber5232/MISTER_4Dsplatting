@@ -383,7 +383,10 @@ di Gaussiane visibili per istante, quelle da memorizzare sono K volte meno.
   immagini PNG; `--width`, `--height` e `--fps` a piacere.
 - `export` (default `--format html`): player e scena in un solo file `.html`
   che si apre con doppio clic, senza server né installazione. Per riprese di
-  pochi secondi.
+  pochi secondi. Se le camere di training stanno su un arco (un vuoto di
+  almeno 120° tra due di loro), la vista libera del player gira solo
+  sull'arco, 10° oltre ogni estremità, come il video. La casella «Resta dove
+  ci sono camere» toglie il limite.
 - `export --format web`: cartella con il player e la scena a blocchi, caricati
   mentre la ripresa scorre. Si apre con doppio clic su `index.html` (o da un
   server web) e regge riprese di qualunque durata.

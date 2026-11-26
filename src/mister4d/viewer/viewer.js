@@ -107,7 +107,7 @@ const state = {
   scene: null, base: '', embedded: false, chunks: [], active: -1, ready: false, drawn: 0,
   frame: 0, shown: -1, clock: 0, playing: true, speed: 1, loop: true,
   az: 0, el: 0.15, dist: 3, target: [0, 0, 0], fovY: 40 * Math.PI / 180, home: null,
-  preset: null, dirty: true, splatScale: 1, lastTime: 0, fps: 0, statsAt: 0,
+  preset: null, arc: null, dirty: true, splatScale: 1, lastTime: 0, fps: 0, statsAt: 0,
 };
 let program, uniforms, indexBuffer, order, ids, depth, keys, counts;
 
@@ -248,6 +248,36 @@ function currentCamera() {
     rows: [[...x, -dot(x, eye)], [...y, -dot(y, eye)], [...z, -dot(z, eye)]],
     focal: [f, f], center: [W / 2, H / 2],
   };
+}
+
+// The part of the circle around the subject that the training cameras cover, 10 degrees wider at
+// each end, or null when they surround it. Beyond it nothing was filmed: the free view stays inside.
+function cameraArc() {
+  const s = state.scene;
+  const center = s.bbox_min.map((v, i) => (v + s.bbox_max[i]) / 2);
+  const az = s.cameras.filter((c) => !c.holdout).map((c) => {
+    const eye = [0, 1, 2].map((i) => -(c.R[0][i] * c.t[0] + c.R[1][i] * c.t[1] + c.R[2][i] * c.t[2]));
+    return Math.atan2(eye[1] - center[1], eye[0] - center[0]);
+  }).sort((a, b) => a - b);
+  if (az.length < 2) return null;
+  let gap = 0, after = 0;
+  for (let i = 0; i < az.length; i++) {
+    const next = i + 1 < az.length ? az[i + 1] : az[0] + 2 * Math.PI;
+    if (next - az[i] > gap) { gap = next - az[i]; after = (i + 1) % az.length; }
+  }
+  if (gap < 2 * Math.PI / 3) return null;
+  const margin = 10 * Math.PI / 180;
+  return { start: az[after] - margin, span: 2 * Math.PI - gap + 2 * margin };
+}
+
+// Bring the orbit back inside the arc of the cameras, at its nearer end.
+function keepInArc() {
+  const arc = state.arc;
+  if (!arc || !$('arc').checked) return;
+  const turn = 2 * Math.PI;
+  const along = ((state.az - arc.start) % turn + turn) % turn;
+  if (along <= arc.span) return;
+  state.az = along - arc.span < turn - along ? arc.start + arc.span : arc.start;
 }
 
 // Leave a rig camera and keep orbiting from where it stands.
@@ -620,6 +650,9 @@ function setupControls() {
 
   // Point of view and appearance.
   buildCameraChoices();
+  state.arc = cameraArc();
+  $('arcField').hidden = $('arcHint').hidden = !state.arc;
+  $('arc').addEventListener('change', () => { leavePreset(); keepInArc(); state.dirty = true; });
   $('resetView').addEventListener('click', homeView);
   // The current point of view as a key view of a camera move (mister4d render --path).
   $('copyView').addEventListener('click', () => {
@@ -713,6 +746,7 @@ function setupControls() {
       for (let i = 0; i < 3; i++) state.target[i] -= (cam.rows[0][i] * dx + cam.rows[1][i] * dy) * k;
     } else {
       state.az -= dx * 0.006;
+      keepInArc();
       state.el = Math.max(-1.5, Math.min(1.5, state.el + dy * 0.006));
     }
     state.dirty = true;

@@ -68,7 +68,10 @@ la spiegazione. La voce "Come funziona questo passo" spiega il resto.
 
 Il player. Per una ripresa breve è un solo file, player.html. Per una ripresa
 lunga è una cartella che contiene index.html, da consegnare intera. Si apre
-con doppio clic, anche su un altro computer e senza connessione.
+con doppio clic, anche su un altro computer e senza connessione. Se le camere
+non girano tutto intorno al soggetto, il player lascia girare la vista solo
+dalla parte dove c'erano le camere. Dietro, dove nessuna camera guardava, la
+scena non è ricostruita.
 
 Se serve si ottengono anche:
 
