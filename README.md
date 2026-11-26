@@ -488,12 +488,21 @@ misurato nel riquadro della persona.
 | `rig12`, 12 camere, 720p | 24,6 / 21,9 dB | 34,0 / 26,6 dB | set semitrasparente |
 | `rig12_b`, stesse riprese | 23,2 / 22,4 dB | 37,7 / 30,4 dB | set pieno, velo davanti |
 | `sala16`, 16 camere, 1080p | 25,2 / 26,0 dB | 41,5 / 36,6 dB | set pieno, velo davanti |
+| `rig12_c`, riprese di `rig12` | 30,4 / 33,3 dB | – | contorno del set, niente velo |
+| `sala16_b`, riprese di `sala16` | 33,1 / 34,9 dB | – | contorno del set, niente velo |
 
 Le medie di `sala16` nascondono due situazioni molto diverse. Dalle due
 camere di verifica che stanno tra le camere di training, ai lati, la scena dà
 32 dB e 34,6 dB sul soggetto, con 2,5 cm di errore di profondità: pavimento e
 persona sono nitidi. Dalla camera di verifica frontale dà 21,9 dB, perché
 tutta l'immagine è coperta da un velo grigio.
+
+In `sala16_b` e `rig12_c`, con i punti incerti del set messi sul contorno,
+il velo non c'è più. Dalla camera frontale `sala16_b` dà 39 dB, e l'errore di
+profondità dalle camere di verifica scende a 2,2 cm. Resta debole la camera
+di verifica oltre la fine dell'arco (14 dB): il soggetto visto da lì va bene
+(31 dB), ma il set ha buchi dove nessuna camera guardava. Per questo il
+player ora resta sull'arco delle camere.
 
 Che cosa è stato corretto dopo ogni prova:
 
